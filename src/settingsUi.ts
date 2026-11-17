@@ -46,7 +46,8 @@ const TOGGLES: ToggleDef[] = [
   { key: "autoWeaponAnimation", section: "general", label: "Switch animation when picking a weapon", description: "Picking a weapon plays its idle pose (stand_primary, stand_secondary, ...) so the character holds it properly. Off: keep the animation that is selected.", needsRestart: false },
   { key: "playHitReactions", section: "general", label: "Play mode hit reactions", description: "Explosions gib other characters; bullet hits turn them into ragdolls. Off restores affected characters. Characters reset when a new Play session starts.", needsRestart: false },
   { key: "matchHlmvColors", section: "interface", label: "Match hlmv.exe colours", description: "Turns off the web view's colour management so saturated colours reach the screen unconverted, as hlmv.exe draws them. Removes the orange cast on pure reds on wide-gamut displays; the interface gets a little more saturated.", needsRestart: true },
-  { key: "cameraSmoothing", section: "viewport", label: "Camera smoothing", description: "Eases camera movement and navigation-axis transitions. Off: immediate movement.", needsRestart: false },
+  { key: "cameraSmoothing", section: "viewport", label: "Camera smoothing", description: "Eases the view to where it is sent (focusing, the navigation axes). Off: it jumps there at once.", needsRestart: false },
+  { key: "orbitInertia", section: "viewport", label: "Spin with inertia", description: "The view carries on turning for a moment after you let go of a drag, like an elastic band. Off: it turns exactly with the mouse and stops at once.", needsRestart: false },
   { key: "restoreViewportOnCameraExit", section: "viewport", label: "Return to the viewport when leaving a camera", description: "Leaving a camera's view puts the viewport back where it was before you entered it (position, rotation, field of view).", needsRestart: false },
   { key: "screenshotTransparent", section: "viewport", label: "Transparent screenshots", description: "Leaves the background and the ground plane out of screenshots of the free view (the ground shadow keeps its soft edge). A shot through a camera follows that camera's Capture background setting.", needsRestart: false },
 ];
@@ -248,7 +249,7 @@ export async function createSettingsUi(root: HTMLElement) {
   const builders: Record<SectionId, () => HTMLElement[]> = {
     general: () => [aboutGroup(), group("", ...toggles("general"))],
     interface: () => [group("Size", scaleRow()), group("Style", templateRow(), fontRow()), createThemeSection(), group("Display", ...toggles("interface"))],
-    viewport: () => [group("Navigation", ...toggles("viewport").slice(0, 2), scrollRow()), group("Screenshots", screenshotRow(), ...toggles("viewport").slice(2))],
+    viewport: () => [group("Navigation", ...toggles("viewport").slice(0, 3), scrollRow()), group("Screenshots", screenshotRow(), ...toggles("viewport").slice(3))],
     hotkeys: () => [createHotkeysSection()],
     rigs: () => [createRigSettings()],
     storage: () => [cacheGroup()],

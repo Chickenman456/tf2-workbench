@@ -118,16 +118,19 @@ import { DEFAULT_RIM_LIGHT, parseRimLight, type RimLightState } from "./rimLight
 
 /** Label, model file name under models/player, and the class name items_game.txt uses. */
 const CLASSES: [label: string, mdl: string, gameClass: string][] = [
-  ["Soldier", "soldier", "soldier"],
+  // (the game's own order: the class menu's and the scoreboard's)
   ["Scout", "scout", "scout"],
-  ["Sniper", "sniper", "sniper"],
-  ["Demoman", "demo", "demoman"],
-  ["Medic", "medic", "medic"],
-  ["Heavy", "heavy", "heavy"],
+  ["Soldier", "soldier", "soldier"],
   ["Pyro", "pyro", "pyro"],
-  ["Spy", "spy", "spy"],
+  ["Demoman", "demo", "demoman"],
+  ["Heavy", "heavy", "heavy"],
   ["Engineer", "engineer", "engineer"],
+  ["Medic", "medic", "medic"],
+  ["Sniper", "sniper", "sniper"],
+  ["Spy", "spy", "spy"],
 ];
+/** The class a new character starts as (a new scene's single Soldier). */
+const DEFAULT_CLASS = "soldier";
 
 interface Els {
   wrap: HTMLElement;
@@ -3559,7 +3562,7 @@ export function createViewTab(els: Els) {
     if (base) saveUi(base);
     const copiedPose = copy && base ? base.actor.snapshotCustomPose() : null;
     const pose = copiedPose && base ? { ...copiedPose, bones: base.actor.boneNames, editing: base.actor.isPosing } : undefined;
-    const e = newEntity(v.addActor(), base?.cls ?? CLASSES[0][1], base?.team ?? 0);
+    const e = newEntity(v.addActor(), base?.cls ?? DEFAULT_CLASS, base?.team ?? 0);
     e.group = hierarchy().activeGroup() ?? (copy ? base?.group : undefined);
     if (copy && base) e.actor.setScale(base.actor.scale);
     if (copy && base && inPlace) v.copyPlacement(base.actor, e.actor);
@@ -6538,7 +6541,7 @@ export function createViewTab(els: Els) {
 
   /** A board of one blank page (the board's backdrop and border, nothing on it), for the selected character's class, to fill by hand. */
   function newBlankBoard(show = true) {
-    const cls = selected && !isBuildingCls(selected.cls) ? selected.cls : CLASSES[0][1];
+    const cls = selected && !isBuildingCls(selected.cls) ? selected.cls : DEFAULT_CLASS;
     const mine = newSession("Custom board", [], cls);
     sessions.add(mine);
     const pictures: PromoPicture[] = [{ name: "Page_1", kind: "Page 1", w: 1920, h: 1080, layers: [], texts: [], backdrop: null }];
@@ -7057,7 +7060,7 @@ export function createViewTab(els: Els) {
     selected = null;
     gizmoEntity = null;
     v.setActorGizmo(null);
-    const e = newEntity(v.addActor(), CLASSES[0][1], 0);
+    const e = newEntity(v.addActor(), DEFAULT_CLASS, 0);
     entities.push(e);
     selected = e;
     v.select(e.actor);
@@ -7132,7 +7135,7 @@ export function createViewTab(els: Els) {
   async function inspectItem(item: ItemInfo, weapon: boolean) {
     const current = selected;
     const usable = (cls: string) => itemUsableBy(item, gameClassOf(cls));
-    const cls = current && usable(current.cls) ? current.cls : CLASSES.find((c) => itemUsableBy(item, c[2]))?.[1] ?? current?.cls ?? CLASSES[0][1];
+    const cls = current && usable(current.cls) ? current.cls : CLASSES.find((c) => itemUsableBy(item, c[2]))?.[1] ?? current?.cls ?? DEFAULT_CLASS;
     const team = current?.team ?? 0;
     await openTab(null, item.displayName, undefined, async () => {
       const v = ensureViewer();
@@ -7678,7 +7681,7 @@ export function createViewTab(els: Els) {
     }
     await restoreBoards();
     if (entities.length === 0) {
-      const e = newEntity(v.addActor(), CLASSES[0][1], 0);
+      const e = newEntity(v.addActor(), DEFAULT_CLASS, 0);
       entities.push(e);
       selected = e;
       restoreUi(e);

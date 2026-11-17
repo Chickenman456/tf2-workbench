@@ -19,8 +19,6 @@ export interface Settings {
   autoWeaponAnimation: boolean;
   /** Smooth camera movement and navigation-axis transitions. */
   cameraSmoothing: boolean;
-  /** The view carries on turning for a moment after a drag (off: it stops where the mouse stops). */
-  orbitInertia: boolean;
   /** Leaving a camera's view puts the viewport back where it was before entering it. */
   restoreViewportOnCameraExit: boolean;
   playHitReactions:boolean;

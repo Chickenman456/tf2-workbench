@@ -789,8 +789,7 @@ void main() {
     this.facingMarker = this.buildFacingMarker();
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    // a drag turns the view at once; the inertia that carries it on after the mouse is let go is a setting (Spin with inertia)
-    this.controls.enableDamping = false;
+    this.controls.enableDamping = true;
     // grabbing the view yourself ends a running snap to an axis
     this.controls.addEventListener("start", () => this.viewAnim++);
     this.rig = new RigOverlay(this.camera, this.renderer.domElement, this.controls, this.scene);
@@ -3295,14 +3294,7 @@ void main() {
 
   private viewAnim = 0;
 
-  /** Whether moving the view to a place (focus, an axis of the navigation gizmo) eases there, or jumps at once. */
-  private smoothing = true;
   setCameraSmoothing(enabled: boolean) {
-    this.smoothing = enabled;
-  }
-
-  /** Whether the view carries on turning for a moment after a drag (OrbitControls' damping), or stops where the mouse stops. */
-  setOrbitInertia(enabled: boolean) {
     if (this.controls.enableDamping === enabled) return;
     this.controls.enableDamping = enabled;
     // Finish pending orbit deltas once, then stop accumulating inertia.
@@ -3372,7 +3364,7 @@ void main() {
     const step = (now: number) => {
       if (token !== this.viewAnim) return;
       // camera smoothing can be switched off while it glides: it then ends at once
-      const t = this.smoothing ? Math.min((now - start) / 240, 1) : 1;
+      const t = this.controls.enableDamping ? Math.min((now - start) / 240, 1) : 1;
       if (t >= 1) { finish(); return; }
       const e = t * t * (3 - 2 * t);
       this.camera.position.lerpVectors(fromPosition, position, e);
@@ -3466,7 +3458,7 @@ void main() {
     const to = dir.clone().normalize();
     // straight above or below the orbit controls have no up direction: lean a hair to one side
     if (Math.abs(to.y) > 0.999) to.set(0, Math.sign(to.y) * 0.9999, 0.0141).normalize();
-    if (!this.smoothing) {
+    if (!this.controls.enableDamping) {
       this.camera.position.copy(target).addScaledVector(to, dist);
       this.controls.update();
       return;
@@ -3475,7 +3467,7 @@ void main() {
     const start = performance.now();
     const step = (now: number) => {
       if (token !== this.viewAnim) return;
-      const t = this.smoothing ? Math.min((now - start) / 220, 1) : 1;
+      const t = this.controls.enableDamping ? Math.min((now - start) / 220, 1) : 1;
       const e = t * t * (3 - 2 * t);
       const q = new THREE.Quaternion().slerp(turn, e);
       this.camera.position.copy(target).addScaledVector(from.clone().applyQuaternion(q), dist);

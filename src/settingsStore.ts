@@ -6,7 +6,6 @@ export const DEFAULTS: Settings = {
   matchHlmvColors: true,
   autoWeaponAnimation: true,
   cameraSmoothing: true,
-  orbitInertia: false,
   restoreViewportOnCameraExit: false,
   playHitReactions:true,
   scrollStrength: 1,

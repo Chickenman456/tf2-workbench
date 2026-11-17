@@ -1754,7 +1754,6 @@ export function createViewTab(els: Els) {
     v.setFlashColor(s.flashColor.toLowerCase() === "#e08a3c" ? accentHex() : s.flashColor);
     v.setSelectionOpacity(s.selectionOpacity);
     v.setCameraSmoothing(s.cameraSmoothing);
-    v.setOrbitInertia(s.orbitInertia);
     v.cameras.restoreViewOnExit = s.restoreViewportOnCameraExit;
     v.setScrollStrength(s.scrollStrength);
     v.setNavButtons();

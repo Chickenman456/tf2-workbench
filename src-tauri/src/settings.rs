@@ -16,8 +16,6 @@ pub struct Settings {
     pub auto_weapon_animation: bool,
     /// Ease camera movement and navigation-axis transitions (on by default).
     pub camera_smoothing: bool,
-    /// The view carries on turning for a moment after a drag (off by default: it stops where the mouse stops).
-    pub orbit_inertia: bool,
     /// Leaving a camera's view puts the viewport back exactly where it was before (position, rotation, field of view) instead of
     /// keeping the camera's own place (off by default).
     pub restore_viewport_on_camera_exit: bool,
@@ -66,7 +64,6 @@ impl Default for Settings {
             match_hlmv_colors: true,
             auto_weapon_animation: true,
             camera_smoothing: true,
-            orbit_inertia: false,
             restore_viewport_on_camera_exit: false,
             play_hit_reactions: true,
             scroll_strength: 1.0,

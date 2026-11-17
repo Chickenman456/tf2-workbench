@@ -59,6 +59,7 @@ fn main() {
             commands::read_sound,
             commands::sequence_events,
             commands::sound_entries,
+            commands::read_texture_file,
             commands::player_gibs,
             commands::model_physics,
             commands::get_settings,

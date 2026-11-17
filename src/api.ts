@@ -310,3 +310,5 @@ export const exportBlendRig = (blend: string, blender: string) => invoke<string>
 
 /** Opens a page of the app's releases on GitHub in the default browser. */
 export const openReleasePage = (url: string) => invoke<void>("open_release_page", { url });
+/** An image picked to replace a texture: a .vtf comes decoded (`VTF0`, width, height, RGBA8), any other file as it is. */
+export const readTextureFile = (path: string) => invoke<ArrayBuffer>("read_texture_file", { path });

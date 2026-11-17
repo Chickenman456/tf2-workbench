@@ -1096,8 +1096,10 @@ export function createViewTab(els: Els) {
       if (weapon?.slot === "taunt" && !wasTaunt && !e.actor.isPosing && !e.actor.holdsPose) e.beforeTaunt = animationOf(e);
       e.held = weapons.getHeld();
       const loaded = applyLoadout(e, e.applied);
-      // in pose mode (or on a held pose) the weapon changes in the hands without touching the pose: no idle sequence is switched to
-      if (!e.actor.isPosing && !e.actor.holdsPose) playWeaponAnimation(e, weapon);
+      // in pose mode (or on a held pose) the weapon changes in the hands without touching the pose: no idle sequence is switched to; nor
+      // in a promo shot being edited, whose pose (a selection screen's, a competitive one) is part of the shot (a taunt still plays)
+      const keepsPose = e.actor.isPosing || e.actor.holdsPose || (!!promoEditing?.ents.includes(e) && weapon?.slot !== "taunt");
+      if (!keepsPose) playWeaponAnimation(e, weapon);
       if (weapon?.slot !== "taunt") {
         const before = e.beforeTaunt;
         e.beforeTaunt = undefined;

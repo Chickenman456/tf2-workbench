@@ -60,6 +60,8 @@ fn main() {
             commands::sequence_events,
             commands::sound_entries,
             commands::read_texture_file,
+            commands::read_material_text,
+            commands::material_from_text,
             commands::player_gibs,
             commands::model_physics,
             commands::get_settings,

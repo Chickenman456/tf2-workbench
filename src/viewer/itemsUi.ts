@@ -1,3 +1,4 @@
+import { editedItems, EDITED_TITLE } from "./editedItems";
 import { showContextMenu } from "./contextMenu";
 import { loadItemDb, reloadItemDb } from "./itemCatalog";
 import { itemMatches } from "./itemSearch";
@@ -189,7 +190,8 @@ export function createItemsUi(els: ItemsEls, hooks: ItemsHooks) {
       const dot = e.paint ? `<i class="dot" style="background:${paintFill(e.paint)}" title="${escapeHtml(e.paint.displayName)}"></i>` : "";
       // the eye: the item is taken off for the moment and stays in the loadout (the ✕ takes it out)
       const eye = `<b class="eye" title="${e.hidden ? "Show it again" : "Hide it (it stays in the loadout)"}">${e.hidden ? "◌" : "●"}</b>`;
-      card.innerHTML = `<div class="equipIcon">${dot}${eye}<b class="x" title="Remove">✕</b></div><div class="equipName">${escapeHtml(e.item.displayName)}</div>`;
+      const mark = editedItems.has(e.item.id) ? `<i class="tileEdited" title="${escapeHtml(EDITED_TITLE)}">!</i>` : "";
+      card.innerHTML = `<div class="equipIcon">${dot}${eye}${mark}<b class="x" title="Remove">✕</b></div><div class="equipName">${escapeHtml(e.item.displayName)}</div>`;
       attachItemTooltip(card, () => itemTooltipLines(e.item, { paint: e.paint, hint: e.item.paintable ? "Click to pick a paint (Shift + click selects several)" : "Cannot be painted" }));
       const image = itemImageFor(e.item, e.style);
       if (image) {
@@ -490,6 +492,7 @@ export function createItemsUi(els: ItemsEls, hooks: ItemsHooks) {
         name: it.displayName,
         sub: it.slot,
         paintable: it.paintable,
+        edited: editedItems.has(it.id),
       });
       if (picking) {
         const ok = picking.accept(it);
@@ -590,6 +593,8 @@ export function createItemsUi(els: ItemsEls, hooks: ItemsHooks) {
     hooks.cleared?.();
   };
 
+  // (the "!" of the edited items follows the Textures panel)
+  editedItems.onChange(() => { renderList(); renderEquipped(); });
   return {
     /** The loadout of another character with an item put on or taken off, by the rule the browser uses (nothing is shown). */
     toggleFor(state: { loadout: Equipped[]; activeId: number | null }, item: ItemInfo, equip: boolean, cls: string) {

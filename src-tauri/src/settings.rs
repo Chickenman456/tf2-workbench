@@ -16,7 +16,7 @@ pub struct Settings {
     pub auto_weapon_animation: bool,
     /// Picking a weapon animation from the list with empty hands holds a weapon that plays it (off by default).
     pub auto_stock_weapon: bool,
-    /// The robots' own cosmetics (Scoutbot Armor, the gate bots' lights) are left out of the Cosmetics list.
+    /// The robots' own items (Scoutbot Armor, the gate bots' lights, the Deflector) are left out of the Cosmetics and Weapons lists.
     pub hide_robot_items: bool,
     /// Ease camera movement and navigation-axis transitions (on by default).
     pub camera_smoothing: bool,

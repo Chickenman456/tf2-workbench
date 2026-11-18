@@ -923,6 +923,9 @@ export function createViewTab(els: Els) {
       // a worn item's model swapped for the user's own (the Textures panel's Model row)
       const swapped = itemId !== undefined ? await swappedModel(path, e.cls, data!) : null;
       if (swapped) data = swapped;
+      // a skin past the model's families: the team's own, else the first (studiorender draws family 0; a Botkiller's fob is drawn with its
+      // weapon's skin 4 to 11, and has only the two team families)
+      if (skin >= data!.skinCount) skin = team < data!.skinCount ? team : 0;
       if (material) await loadMaterials([material]);
       else await ensureMaterials(data!, skin);
       list.push({ data: data!, paint: rgb === null ? null : unpackRgb(rgb), skin, clip, itemId, idle, loop, material, tauntClip, buildClip, ...(spell !== undefined ? { spell: { index: spell, blu: team === 1 } } : {}) });

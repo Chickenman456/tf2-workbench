@@ -220,6 +220,7 @@ app.innerHTML = `
         <div id="weaponEquipped" class="chips"></div>
         <div id="weaponSlots" class="slotBtns"><button data-slot="taunt" title="Taunts with a prop; picking one plays the taunt">Taunt</button><button data-slot="primary" class="on">Primary</button><button data-slot="secondary">Secondary</button><button data-slot="melee">Melee</button><button data-slot="utility" title="PDAs, sappers, toolbox, disguise kit">Utility</button></div>
         <div id="warPaint" hidden></div>
+        <label id="weaponFestive" class="festiveRow" hidden title="Put a Festivizer on the held weapon: its string of lights, as in game"><input type="checkbox" /> Festivized</label>
         <div id="weaponList" class="itemlist"></div>
         <div class="itemFoot" id="weaponFoot"><span id="weaponCount" class="dim hint"></span></div>
       </section>

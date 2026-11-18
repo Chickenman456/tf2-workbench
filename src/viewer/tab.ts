@@ -2,7 +2,7 @@ import { icon as svgIcon, ICONS as LUCIDE, type IconName } from "../icons";
 import { shadowLayer, shadowOf, shotRegions, solidOf, type ShotEffects } from "./promo";
 import { isRobotOnlyItem } from "./robotItems";
 import { partsOf } from "./promoMask";
-import { picturePsd } from "./promoPsd";
+import { boardPsd, picturePsd } from "./promoPsd";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { createCompilerUi, type PreviewApplication } from "../compiler/compilerUi";
@@ -6493,6 +6493,13 @@ export function createViewTab(els: Els) {
   };
   const promoBoardHost: BoardHost = {
     async exportAll(pictures, look, format = "png") {
+      if (format === "psd-one") {
+        const path = await save({ title: "The promo Photoshop file", defaultPath: `${(pictures[0]?.name ?? "promo").replace(/[\\/:*?"<>|]+/g, "_")} (all).psd`, filters: [{ name: "Photoshop", extensions: ["psd"] }] });
+        if (!path) return "Cancelled.";
+        await writeBinaryFile(path, await boardPsd(pictures, look));
+        void revealFile(path).catch(() => {});
+        return `Saved ${pictures.length} pictures in one Photoshop file, ${path}.`;
+      }
       const picked = await open({ directory: true, title: format === "psd" ? "Folder for the promo Photoshop files" : "Folder for the promo pictures" });
       const dir = typeof picked === "string" ? picked : null;
       if (!dir) return "Cancelled.";

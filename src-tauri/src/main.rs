@@ -62,6 +62,7 @@ fn main() {
             commands::read_texture_file,
             commands::read_material_text,
             commands::material_from_text,
+            commands::read_game_file,
             commands::player_gibs,
             commands::model_physics,
             commands::get_settings,

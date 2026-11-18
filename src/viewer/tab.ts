@@ -972,7 +972,9 @@ export function createViewTab(els: Els) {
       // the items that play an animation of their own all the time: a sequence the game runs on its own clock (a style without it has none:
       // it is posed as the others are)
       if (!weaponClip && it !== weapon) { weaponClip = await cosmeticClockClip(path); loop = !!weaponClip; }
-      if (!weaponClip && it !== weapon) { weaponClip = await cosmeticIdleClip(path, e.cls); idle = !!weaponClip; }
+      // (the held weapon too: the game runs a bonemerged model's own sequence on the bones the class lacks, which turns the Short
+      // Circuit's arm_attach_R onto the forearm; without it the gauntlet floats at its bind pose)
+      if (!weaponClip) { weaponClip = await cosmeticIdleClip(path, e.cls); idle = !!weaponClip; }
       // an item drawn in one material of its own whatever its model says (the Golden Wrench's gold)
       await add(path, rgb, skin, weaponClip, it.id, idle, loop, itemMaterialOverride(it) ?? undefined, tauntClip, paint?.spell, buildClip);
       if (buildClip && pose && list.length) list[list.length - 1].buildPose = pose;
@@ -985,6 +987,13 @@ export function createViewTab(els: Els) {
     }
     // the item being built hides what its Hides chips say, as an item of the game does
     if (compilerPreview && e === compilerTarget && compilerPreview.cls === e.cls) Object.assign(groups, compilerPreview.bodygroups);
+    // wm_bodygroup_override: a body part of the class model in a state while the item is out (the held Short Circuit takes the Engineer's
+    // own right arm away, the Gunslinger's too: its gauntlet is the arm; the Purity Fist gives the Heavy the hand made for it)
+    for (const { item } of everything) {
+      if (!item.wmBodygroup) continue;
+      const part = models.get(classPath(e.cls))?.bodyParts[item.wmBodygroup[0]]?.name;
+      if (part) groups[part.toLowerCase()] = item.wmBodygroup[1];
+    }
     const merged = { ...groups, ...Object.fromEntries(e.bodyManual) };
     // a Voodoo-Cursed soul puts the class model in its zombie skin: its materials load before the skin changes
     e.zombie = everything.some(({ item }) => item.skinOverride);

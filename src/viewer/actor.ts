@@ -15,7 +15,8 @@ import { bodyClass, bodyGroups, hiddenBodyBits, legacyBodyGroups, materialBodyGr
 import { bodyMaskTexture } from "./bodyMasks";
 import { PoseHistory, clonePose, poseToClip, sampleClip, type PoseData } from "./poseRig";
 import type { Rgb } from "./proxies";
-import { NO_CONDITIONS, anyCondition, materialEffects, type Conditions } from "./conditions";
+import { sheenFrame } from "./killstreak";
+import { DEFAULT_CLOAK, NO_CONDITIONS, anyCondition, materialEffects, type Conditions } from "./conditions";
 import type { SourceMaterials } from "./sourceMaterials";
 
 /** A mesh whose vertices follow the flex weights of the model it belongs to. */
@@ -199,6 +200,14 @@ export class Actor {
   private lodClass: ModelData | null = null;
   /** Player conditions that change the look (Jarate, Ubercharge, crit glow, fire); see conditions.ts. */
   conditions: Conditions = { ...NO_CONDITIONS };
+  /** How far the Cloak effect has him gone (0..1), while it is on. */
+  cloakAmount = DEFAULT_CLOAK;
+  setCloakAmount(amount: number) {
+    const next = Math.max(0, Math.min(1, amount));
+    if (next === this.cloakAmount) return;
+    this.cloakAmount = next;
+    if (this.conditions.cloak) this.applyConditions();
+  }
   /** The invulnerability material of each team (RED, BLU), which replaces every material while the character is uber. */
   private uberData: [MaterialData | null, MaterialData | null] = [null, null];
   /** Team skin family: 0 RED, 1 BLU. Models without that family fall back to family 0. */
@@ -815,6 +824,7 @@ export class Actor {
         mesh.userData.maskKey = `${bp.name}/${modelIndex}/${meshIndex}`;
         // (what the grey is made from: the body's own material data; an eye is plain grey)
         mesh.userData.grayData = { data: eye ? null : this.materials.get(path) ?? null };
+        if (eye) mesh.userData.eye = true;
         this.maskMesh(mesh);
         this.classGroup.add(mesh);
       }
@@ -903,15 +913,29 @@ export class Actor {
   }
 
   private applyConditions() {
-    const fx = materialEffects(this.conditions, this.skin);
+    const fx = materialEffects(this.conditions, this.skin, this.cloakAmount);
     const uberData = this.conditions.uber ? this.uberData[this.skin === 1 ? 1 : 0] : null;
     const uber = uberData ? this.ctx.mats.material(uberData, undefined, null, { invuln: 1 }) : null;
     for (const group of [this.classGroup, this.cosmeticGroup]) {
       group?.traverse((o) => {
         if (!(o instanceof THREE.SkinnedMesh)) return;
         const source = o.userData.source as { data: MaterialData | null; paint: Rgb | null; spell?: [number, number]; warPaint?: THREE.Texture | null } | undefined;
-        if (!source) return;
-        const next = uber ?? this.ctx.mats.material(source.data, undefined, source.paint, source.spell ? { ...fx, spell: source.spell } : fx, source.warPaint);
+        if (!source) {
+          // the eyes and the parts of the body under a mask keep materials of their own: a cloak takes them too (the eyes go with his face)
+          if (o.userData.eye) o.visible = !(fx?.cloak && fx.cloak >= 0.4);
+          else if (o.userData.bodyMask && (o.material as THREE.ShaderMaterial).uniforms?.uCloak) {
+            const mat = o.material as THREE.ShaderMaterial;
+            mat.uniforms.uCloak = { value: fx?.cloak ?? 0 };
+            mat.uniforms.uCloakTint = { value: new THREE.Vector3(...(fx?.cloakTint ?? [1, 1, 1])) };
+            mat.userData.baseTransparent ??= mat.transparent;
+            mat.transparent = mat.userData.baseTransparent || !!fx?.cloak;
+            mat.needsUpdate = true;
+          }
+          return;
+        }
+        const frame = o.userData.sheenFrame as ReturnType<typeof sheenFrame> | undefined;
+        const own = frame && this.sheen ? { ...fx, sheen: { ...this.sheen, ...frame } } : fx;
+        const next = uber ?? this.ctx.mats.material(source.data, undefined, source.paint, source.spell ? { ...own, spell: source.spell } : own, source.warPaint);
         // a body in grey stays grey: what the conditions make of it shows when the grey is taken off
         if (this.gray && o.userData.ownMaterial) { o.userData.ownMaterial = next; return; }
         if (o.material !== next) o.material = next;
@@ -995,6 +1019,7 @@ export class Actor {
     this.boneOverride.clear();
     const classIndex = new Map(this.classData.bones.map((b, i) => [b.name.toLowerCase(), i]));
     for (const [index, { data, paint, skin, clip, idle, loop, tauntClip, buildClip, buildPose }] of list.entries()) {
+      let weaponFrame: ReturnType<typeof sheenFrame> | undefined;
       const rig = new Rig(data.bones);
       const bones = data.bones.map((info) => {
         const b = new THREE.Bone();
@@ -1041,6 +1066,8 @@ export class Actor {
           const material = this.ctx.mats.material(this.materials.get(path) ?? null, undefined, paint, spellFx, warPaint);
           const mesh = this.makeSkinnedMesh(m, material, skeleton, data, this.flexCosmetic);
           mesh.userData.source = { data: this.materials.get(path) ?? null, paint, skins: override ? [override] : m.materials, base: override ?? m.material, spell: spellFx?.spell, warPaint };
+          // (the held weapon's meshes: a killstreak's sheen sweeps along its length, see setSheen)
+          if (list[index].weapon) mesh.userData.sheenFrame = weaponFrame ??= sheenFrame(data);
           mesh.userData.cosmeticSlot = index + 1; // 1.. in the order of the list; 0 / unset is the class's own mesh
           // (what hiding by hand keys the item's triangles by: the same item keeps them when it is rebuilt)
           mesh.userData.meshData = m;
@@ -1054,8 +1081,16 @@ export class Actor {
     this.posedTime = NaN;
     this.updateCosmetics();
     if (this.heldHidden) this.applyHeldHidden();
-    if (anyCondition(this.conditions)) this.applyConditions();
+    if (anyCondition(this.conditions) || this.sheen) this.applyConditions();
     this.changed = true;
+  }
+
+  /** The sheen of the held weapon's killstreak (null: none): its colour, whether it is an Australium's, and the wait between sweeps. */
+  private sheen: { tint: Rgb; index: number; wait: number } | null = null;
+  setSheen(sheen: { tint: Rgb; index: number; wait: number } | null) {
+    if (JSON.stringify(sheen) === JSON.stringify(this.sheen)) return;
+    this.sheen = sheen;
+    this.applyConditions();
   }
 
   /**

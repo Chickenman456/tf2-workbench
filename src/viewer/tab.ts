@@ -3087,6 +3087,20 @@ export function createViewTab(els: Els) {
       void applyLoadout(t, t.applied);
     }
   };
+  // --- the fold over the held weapon's war paint, Festivizer and killstreak: shown while any of them is, open or closed as last left ---
+  {
+    const extras = document.getElementById("weaponExtras") as HTMLDetailsElement | null;
+    if (extras) {
+      const rows = [...extras.children].filter((c) => c.tagName !== "SUMMARY");
+      // (set only when it changes: setting it again would be one more change for the observer)
+      const sync = () => { const hide = rows.every((r) => (r as HTMLElement).hidden); if (extras.hidden !== hide) extras.hidden = hide; };
+      new MutationObserver(sync).observe(extras, { subtree: true, attributes: true, attributeFilter: ["hidden"] });
+      sync();
+      try { extras.open = localStorage.getItem("tf2workbench.weaponExtrasOpen") === "1"; } catch { /* closed */ }
+      extras.addEventListener("toggle", () => { try { localStorage.setItem("tf2workbench.weaponExtrasOpen", extras.open ? "1" : "0"); } catch { /* not kept */ } });
+    }
+  }
+
   // --- the killstreak of the held weapon (the Weapons panel's Sheen, Killstreaker and streak; see killstreak.ts) ---
   const ksRow = document.getElementById("weaponKillstreak");
   const ksSheen = document.getElementById("ksSheen") as HTMLSelectElement | null;

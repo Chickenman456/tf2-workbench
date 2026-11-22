@@ -85,6 +85,8 @@ import { LightGizmos } from "./lightGizmos";
 import { hotkeyMatches, mouseButtonOf, redoMatches } from "../hotkeys";
 import { LAYER_GLSL, adaptAlpha, planLayers, rimLayerName, rimLayerPixels, sceneOnlyLook, type ExportLayer } from "./layerExport";
 import { resolveCaptureEmission } from "./captureAlpha";
+import { setVisDevUniforms, visDevUniforms, type VisDevSettings } from "./visDev";
+import { VisDevNormalsPass } from "./visDevPass";
 
 export type { CosmeticSpec } from "./actor";
 
@@ -533,6 +535,8 @@ export class Viewer {
     uPointFalloff: { value: 1.5 },
     // 0 shaded, 1 diffuse colour only, 2 grayscale (see the fragment shaders)
     uViewMode: { value: 0 },
+    // the compiler's vis dev look (visDev.ts)
+    ...visDevUniforms(),
     // the cubemap that the materials which reflect "the cubemap of the level" (env_cubemap) show instead of their own, when one is picked
     tWorldCube: { value: null as THREE.CubeTexture | null },
     uWorldCube: { value: 0 },
@@ -688,6 +692,8 @@ void main() {
     bodyMaskPass(this.wireMaterial);
     this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     this.lightingRenderer = new LightingRenderer(this.shared);
+    // the item's normals for the vis dev cavity, drawn before each render of the scene
+    new VisDevNormalsPass(this.renderer, this.scene, this.shared);
     this.renderer.setPixelRatio(window.devicePixelRatio);
     container.appendChild(this.renderer.domElement);
     this.fpsCounter.className = "fpsCounter";
@@ -2010,6 +2016,11 @@ void main() {
     this.floorGrid.setStyle(displayColor(color), opacity);
   }
 
+  /** The compiler's vis dev look: its strengths, and whether it shows (on the geometry that was baked for it). */
+  setVisDev(settings: VisDevSettings) {
+    setVisDevUniforms(this.shared, settings);
+  }
+
   /** How the surfaces are shown: the lit material, just the diffuse colour (the base texture), or the lit result without colour. */
   setShading(mode: "shaded" | "diffuse" | "gray") {
     this.shared.uViewMode.value = mode === "diffuse" ? 1 : mode === "gray" ? 2 : 0;
@@ -3058,9 +3069,19 @@ void main() {
   private skyRotation = 0;
   private skyBrightness = 1;
   /** Gives the view a vertical field of view of its own (degrees), whatever its shape; null: the horizontal one of the view setting. */
-  setFixedVerticalFov(degrees: number | null) {
+  setFixedVerticalFov(degrees: number | null, keepSize = false) {
+    const before = this.camera.fov;
     this.fixedVerticalFov = degrees;
     this.resize();
+    // keepSize: what is at the orbit's centre stays the same size on screen (a dolly zoom): the camera moves back as the field narrows
+    if (!keepSize || this.cameras.activeCamera || this.camera.isOrthographicCamera || this.camera.fov === before) return;
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    const dist = offset.length() * (Math.tan((before * Math.PI) / 360) / Math.tan((this.camera.fov * Math.PI) / 360));
+    this.camera.position.copy(this.controls.target).addScaledVector(offset.normalize(), dist);
+    this.camera.near = Math.max(0.1, dist / 100);
+    this.camera.far = Math.max(this.camera.far, dist * 20);
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
   }
 
   /** The colour of the scene behind everything when there is no sky ("#rrggbb"). */
@@ -3697,8 +3718,8 @@ void main() {
     return box;
   }
 
-  /** Starts a selection (box, lasso or brush) over a character's body, as the view looks now. */
-  beginSelect(actor: Actor): ViewSelection | null {
+  /** Starts a selection (box, lasso or brush) over a character's body, or over the items it wears, as the view looks now. */
+  beginSelect(actor: Actor, target: "body" | "items" = "body"): ViewSelection | null {
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.camera.updateMatrixWorld();
     const ndc = new THREE.Vector3();
@@ -3708,7 +3729,7 @@ void main() {
       out.x = rect.left + (ndc.x * 0.5 + 0.5) * rect.width;
       out.y = rect.top + (0.5 - ndc.y * 0.5) * rect.height;
       return true;
-    });
+    }, target);
   }
 
   /** Camera on everything shown, from the front and a little to the side and above, as for looking over a single item. */

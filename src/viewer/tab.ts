@@ -1,5 +1,5 @@
 import { icon as svgIcon, ICONS as LUCIDE, type IconName } from "../icons";
-import { shadowLayer, shadowOf, shotRegions, solidOf, type ShotEffects } from "./promo";
+import { shadowApart, shadowLayer, shadowOf, shotRegions, solidOf, type ShotEffects } from "./promo";
 import { isRobotOnlyItem } from "./robotItems";
 import { partsOf } from "./promoMask";
 import { boardPsd, picturePsd } from "./promoPsd";
@@ -43,6 +43,7 @@ import { deletePoseFile, openPosesFolder, readPoses, refreshWorkshop as refreshW
 import { applyHandFile, parsePoseFile, poseForSkeleton, toHandFile, toPoseFile, type PoseData, type PoseFile } from "./poseRig";
 import * as THREE from "three";
 import { createItemsUi, TEMPORARY_ITEM, type Equipped, type ItemsEls } from "./itemsUi";
+import { bakeVisDev, copyVisDev, loadVisDev, saveVisDev, type VisDevSettings } from "./visDev";
 import { unpackRgb } from "./proxies";
 import { spellPaints } from "./spellPaints";
 import { PlayController } from "./play";
@@ -71,7 +72,7 @@ import { DEFAULT_GROUND, type GroundState } from "./groundPlane";
 import { DEFAULT_SKY, loadSkyTexture, type SkyState } from "./skybox";
 import { countOf, newPostId, POST_KINDS, statesOf, type PostItem, type PostKind } from "./postStack";
 import { entityHidden, isInside, newGroupName, parseGroups, withDescendants, type HierarchyGroup } from "./hierarchyTree";
-import { createBodyPicker } from "./bodyPicker";
+import { createBodyPicker, createHideTools, type HideTool } from "./bodyPicker";
 import { createTexturePreview, type PreviewItem } from "./texturePreview";
 import { decodeReplacement, REPLACEMENT_EXTENSIONS, TextureOverrides } from "./textureOverrides";
 import { closePaintChart, openPaintChart, type ChartCell } from "./paintChart";
@@ -491,7 +492,7 @@ export function createViewTab(els: Els) {
   let iconOrigin: SceneTab | null = null;
   let iconSaved = { grid: false, indicators: true };
   /** The vertical field of view icons are taken with (degrees). */
-  const ICON_FOV = 22;
+  const ICON_FOV = 5;
   /** The prop being compiled, shown in the scene (the compiler's Prop side). */
   let propPreview: Entity | null = null;
   const PROP_PREVIEW_CLS = "__workbench__/prop_preview";
@@ -523,6 +524,38 @@ export function createViewTab(els: Els) {
     await show(e, e.cls);
     // it stands on the floor, whatever the origin of the model
     if (first && entities.includes(e)) v.placeActorAt(e.actor, e.actor.offset.x, -e.actor.bindMinY, e.actor.offset.z);
+  }
+
+  // --- vis dev: the compiler's item with baked-looking shading made from its geometry (visDev.ts) ---
+  let visDev = loadVisDev();
+  let visDevRun = 0;
+  let visDevTimer = 0;
+  /** Bakes the occlusion and curvature of the compiler's item into its geometry, unless it holds them for this distance already. */
+  async function bakeCompilerVisDev() {
+    const e = compilerTarget;
+    if (!visDev.on || !e) return;
+    const meshes = e.actor.cosmeticMeshes(TEMPORARY_ITEM).map((m) => m.mesh);
+    const geos = [...new Set(meshes.map((m) => m.geometry))];
+    const key = `2|${visDev.aoDistance}`;
+    if (geos.length === 0 || geos.every((g) => g.userData.visDevKey === key && g.getAttribute("visDev"))) return;
+    const run = ++visDevRun;
+    const parts = geos.map((g) => ({ positions: g.getAttribute("position").array, normals: g.getAttribute("normal").array, indices: g.getIndex()?.array ?? new Uint32Array(0) }));
+    const baked = await bakeVisDev(parts, visDev.aoDistance, () => run !== visDevRun);
+    if (!baked || run !== visDevRun) return;
+    geos.forEach((g, i) => {
+      g.setAttribute("visDev", new THREE.BufferAttribute(baked[i].occlusion, 2));
+      g.setAttribute("visDevPos", new THREE.BufferAttribute(baked[i].place, 3));
+      g.userData.visDevKey = key;
+    });
+  }
+  function setVisDev(next: VisDevSettings) {
+    const rebake = next.on && (!visDev.on || next.aoDistance !== visDev.aoDistance);
+    visDev = next;
+    saveVisDev(next);
+    viewer?.setVisDev(next);
+    window.clearTimeout(visDevTimer);
+    // a slider being dragged bakes once it rests
+    if (rebake) visDevTimer = window.setTimeout(() => void bakeCompilerVisDev(), 250);
   }
 
   /** Puts the item (or nothing) on the selected character and takes it off the one that wore it. */
@@ -572,6 +605,8 @@ export function createViewTab(els: Els) {
       return typeof picked === "string" ? readItemSession(picked) : null;
     },
     setPreview: showCompilerItem,
+    visDev: () => copyVisDev(visDev),
+    setVisDev,
     pick: async (kind, current) => {
       const filter = kind === "fbx" ? { name: "Model", extensions: [...MODEL_EXTENSIONS] }
         : { name: kind === "smd" ? "Collision model" : "Texture", extensions: [kind] };
@@ -1019,6 +1054,7 @@ export function createViewTab(els: Els) {
     if ((e.warPaintSkin?.key ?? null) !== warPaintKey(e)) e.actor.setHeldSkin(null);
     e.actor.setCosmetics(list);
     e.actor.setProp(prop);
+    if (e === compilerTarget) void bakeCompilerVisDev();
     void syncConditions(e);
     refreshTextures(); // (the panel lists every character's models, not only the selected one's)
     if (e === selected) renderJiggles();
@@ -1981,6 +2017,7 @@ export function createViewTab(els: Els) {
       viewer.setEntityGizmoParts(characterGizmoParts);
       viewer.setGizmoSpace(gizmoLocal);
       viewer.setShading(shading);
+      viewer.setVisDev(visDev);
       applyViewSettings(viewer);
       viewer.onLightChange = l => { syncSliders(l); applyGizmoParts(); };
       viewer.onPointLightChange = (l) => {
@@ -2223,6 +2260,7 @@ export function createViewTab(els: Els) {
    * and the parts that are only drawn or not (the hide groups) the right one.
    */
   function renderBodygroups() {
+    if (iconTab && activeTab === iconTab) renderIconParts(); // the studio's own list of the parts
     if (!bodyBox) return;
     bodyBox.replaceChildren();
     const e = selected;
@@ -5444,15 +5482,22 @@ export function createViewTab(els: Els) {
     const lit = <T>(job: () => Promise<T>) => (studio ? withStudioLight(studio, cam.quaternion, job) : withShotLight(pan?.light, job));
     try {
       return await lit(async () => {
-        const shot = await v.capture(1, true, { camera: cam, only: actors, size: { w: W, h: H }, canvas: true, groundShadow: shadow, look, ao });
+        // (with the view's look, the shot is taken without its shadow, which is taken apart below: the board tints and blends it)
+        const shot = await v.capture(1, true, { camera: cam, only: actors, size: { w: W, h: H }, canvas: true, groundShadow: look ? undefined : shadow, look, ao });
         // the parts of the character, for a fade mask that keeps some of them whole (not for a drag's quick step: the full one follows)
         if (pan?.parts && !quick) partsOf.set(shot.canvas!, v.partsPicture(actors, cam, shot.canvas!.width, shot.canvas!.height));
         // with effects, the shot again without them: the character alone, for its bounds and clicks
         if (shadow || look) {
           const plain = await v.capture(1, true, { camera: cam, only: actors, size: { w: W, h: H }, canvas: true });
           solidOf.set(shot.canvas!, plain.canvas!);
-          // the shadow on its own (with the look's glow and bloom it cannot be told from them: that shot keeps its shadow in its pixels)
+          // the shadow on its own: what the shot has over the plain one (with the look, from a shot of its own without the look, the
+          // look's glow and bloom not being told from a shadow)
           if (shadow && !look) shadowOf.set(shot.canvas!, shadowLayer(shot.canvas!, plain.canvas!));
+          else if (shadow) {
+            const shaded = await v.capture(1, true, { camera: cam, only: actors, size: { w: W, h: H }, canvas: true, groundShadow: shadow, ao });
+            shadowOf.set(shot.canvas!, shadowLayer(shaded.canvas!, plain.canvas!));
+            shadowApart.add(shot.canvas!);
+          }
         }
         // with particles in the shot (smoke, a hat's effect), the character alone too: its bounds and clicks are not those of the smoke
         if (v.hasParticles(actors)) {
@@ -7456,39 +7501,66 @@ export function createViewTab(els: Els) {
   const iconFrame = document.getElementById("iconFrame") as HTMLElement;
   const iconBar = document.getElementById("iconBar") as HTMLElement;
   const iconStatus = document.getElementById("iconStatus") as HTMLElement;
-  const iconFadePanel = document.getElementById("iconFade") as HTMLElement;
+  const iconPanel = document.getElementById("iconPanel") as HTMLElement;
 
-  // The fade of the bottom of the picture: its switch and shape, remembered, with the band in the frame that shows where and how it eases out.
+  // The fades of the top and the bottom of the picture: their switches and shapes, remembered, with a band in the frame for each that
+  // shows where and how it eases out.
   const FADE_KEY = "tf2workbench.iconFade";
-  let iconFade = { on: true, height: 60, curve: 1.5 };
+  type FadeEdgeState = { on: boolean; height: number; curve: number };
+  const iconFade: Record<"top" | "bottom", FadeEdgeState> = { top: { on: false, height: 40, curve: 1.5 }, bottom: { on: true, height: 60, curve: 1.5 } };
   try {
     const saved = JSON.parse(localStorage.getItem(FADE_KEY) ?? "null");
-    if (saved && typeof saved === "object") iconFade = { on: saved.on !== false, height: Number.isFinite(saved.height) ? saved.height : 60, curve: Number.isFinite(saved.curve) ? saved.curve : 1.5 };
+    const read = (into: FadeEdgeState, s: unknown) => {
+      if (!s || typeof s !== "object") return;
+      const o = s as Partial<FadeEdgeState>;
+      into.on = o.on !== false;
+      if (Number.isFinite(o.height)) into.height = o.height!;
+      if (Number.isFinite(o.curve)) into.curve = o.curve!;
+    };
+    // (saved before the top had a fade: the one fade was the bottom's)
+    if (saved && typeof saved === "object" && ("top" in saved || "bottom" in saved)) { read(iconFade.top, saved.top); read(iconFade.bottom, saved.bottom); }
+    else read(iconFade.bottom, saved);
   } catch {
     // storage unavailable: the defaults
   }
-  const fadeOn = document.getElementById("iconFadeOn") as HTMLInputElement;
-  const fadeInputs = {
-    height: [document.getElementById("iconFadeHeight"), document.getElementById("iconFadeHeightNumber")] as HTMLInputElement[],
-    curve: [document.getElementById("iconFadeCurve"), document.getElementById("iconFadeCurveNumber")] as HTMLInputElement[],
+  const SAFE_ROWS = ICON_SAFE_ROWS.end - ICON_SAFE_ROWS.start;
+  const fadeEdges = (["top", "bottom"] as const).map((edge) => {
+    const box = iconPanel.querySelector<HTMLElement>(`.iconFadeEdge[data-edge="${edge}"]`)!;
+    return {
+      edge,
+      box,
+      on: box.querySelector<HTMLInputElement>('input[data-k="on"]')!,
+      height: Array.from(box.querySelectorAll<HTMLInputElement>('input[data-k="height"]')),
+      curve: Array.from(box.querySelectorAll<HTMLInputElement>('input[data-k="curve"]')),
+      band: iconFrame.querySelector<HTMLElement>(`.iconFadeBand[data-edge="${edge}"]`)!,
+    };
+  });
+  const edgeFade = (s: FadeEdgeState) => (s.on && s.height > 0 ? { height: s.height, curve: s.curve } : null);
+  /** The fades to apply to the picture (null: none). */
+  const currentFade = (): IconFade | null => {
+    const top = edgeFade(iconFade.top), bottom = edgeFade(iconFade.bottom);
+    return top || bottom ? { top, bottom } : null;
   };
-  /** The fade to apply to the picture (null: none). */
-  const currentFade = (): IconFade | null => (iconFade.on && iconFade.height > 0 ? { height: iconFade.height, curve: iconFade.curve } : null);
   function showIconFade() {
-    fadeOn.checked = iconFade.on;
-    for (const input of fadeInputs.height) input.value = String(iconFade.height);
-    for (const input of fadeInputs.curve) input.value = String(iconFade.curve);
-    for (const input of [...fadeInputs.height, ...fadeInputs.curve]) input.disabled = !iconFade.on;
-    // the band: how much of the picture is left at each row of the fade, as darkness over the black behind it
-    const band = document.getElementById("iconFadeBand") as HTMLElement;
-    const fade = currentFade();
-    const rows = Math.min(iconFade.height, ICON_SAFE_ROWS.end - ICON_SAFE_ROWS.start);
-    band.hidden = !fade;
-    if (!fade) return;
-    band.style.top = `${((ICON_SAFE_ROWS.end - rows) / 512) * 100}%`;
-    band.style.height = `${(rows / 512) * 100}%`;
-    const stops = Array.from({ length: 9 }, (_, i) => `rgba(0,0,0,${(1 - fadeAmount(ICON_SAFE_ROWS.end - rows + (rows * i) / 8, fade)).toFixed(3)}) ${(i / 8) * 100}%`);
-    band.style.background = `linear-gradient(to bottom, ${stops.join(", ")})`;
+    for (const f of fadeEdges) {
+      const s = iconFade[f.edge];
+      f.on.checked = s.on;
+      for (const input of f.height) input.value = String(s.height);
+      for (const input of f.curve) input.value = String(s.curve);
+      for (const input of [...f.height, ...f.curve]) input.disabled = !s.on;
+      f.box.classList.toggle("off", !s.on);
+      // the band: how much of the picture this edge's fade leaves at each of its rows, as darkness over the black behind it
+      const fade = edgeFade(s);
+      f.band.hidden = !fade;
+      if (!fade) continue;
+      const rows = Math.min(s.height, SAFE_ROWS);
+      const first = f.edge === "top" ? ICON_SAFE_ROWS.start : ICON_SAFE_ROWS.end - rows;
+      f.band.style.top = `${(first / 512) * 100}%`;
+      f.band.style.height = `${(rows / 512) * 100}%`;
+      const alone: IconFade = f.edge === "top" ? { top: fade, bottom: null } : { top: null, bottom: fade };
+      const stops = Array.from({ length: 9 }, (_, i) => `rgba(0,0,0,${(1 - fadeAmount(first + (rows * i) / 8, alone)).toFixed(3)}) ${(i / 8) * 100}%`);
+      f.band.style.background = `linear-gradient(to bottom, ${stops.join(", ")})`;
+    }
   }
   function saveIconFade() {
     showIconFade();
@@ -7498,37 +7570,158 @@ export function createViewTab(els: Els) {
       // not remembered
     }
   }
-  fadeOn.onchange = () => { iconFade.on = fadeOn.checked; saveIconFade(); };
-  for (const key of ["height", "curve"] as const) {
-    for (const input of fadeInputs[key]) {
-      input.oninput = () => {
-        const v = Number(input.value);
-        if (!Number.isFinite(v)) return;
-        iconFade[key] = key === "height" ? Math.max(0, Math.min(ICON_SAFE_ROWS.end - ICON_SAFE_ROWS.start, v)) : Math.max(0.1, Math.min(8, v));
-        // the slider and the number box follow each other (not the one being typed in)
-        for (const other of fadeInputs[key]) if (other !== input) other.value = String(iconFade[key]);
-        saveIconFade();
-      };
+  for (const f of fadeEdges) {
+    const s = iconFade[f.edge];
+    f.on.onchange = () => { s.on = f.on.checked; saveIconFade(); };
+    for (const key of ["height", "curve"] as const) {
+      for (const input of f[key]) {
+        input.oninput = () => {
+          const v = Number(input.value);
+          if (!Number.isFinite(v)) return;
+          s[key] = key === "height" ? Math.max(0, Math.min(SAFE_ROWS, v)) : Math.max(0.1, Math.min(8, v));
+          // the slider and the number box follow each other (not the one being typed in)
+          for (const other of f[key]) if (other !== input) other.value = String(s[key]);
+          saveIconFade();
+        };
+      }
     }
   }
+
+  // The field of view icons are taken with: remembered, 5 degrees at first (a long lens, as the game's icons are flat).
+  const FOV_KEY = "tf2workbench.iconFov";
+  let iconFov = ICON_FOV;
+  try {
+    const saved = Number(localStorage.getItem(FOV_KEY) ?? NaN);
+    if (Number.isFinite(saved) && saved >= 1 && saved <= 90) iconFov = saved;
+  } catch {
+    // the default
+  }
+  const fovInputs = [document.getElementById("iconFov"), document.getElementById("iconFovNumber")] as HTMLInputElement[];
+  const fovReset = document.getElementById("iconFovReset") as HTMLButtonElement;
+  function setIconFov(deg: number, from?: HTMLInputElement) {
+    iconFov = Math.max(1, Math.min(90, Math.round(deg * 10) / 10));
+    for (const input of fovInputs) if (input !== from) input.value = String(iconFov);
+    fovReset.disabled = iconFov === ICON_FOV;
+    if (iconTab && activeTab === iconTab) viewer?.setFixedVerticalFov(iconFov, true); // (the item keeps its size in the frame)
+    try {
+      localStorage.setItem(FOV_KEY, String(iconFov));
+    } catch {
+      // not remembered
+    }
+  }
+  for (const input of fovInputs) input.oninput = () => { const v = Number(input.value); if (Number.isFinite(v) && v > 0) setIconFov(v, input); };
+  fovReset.onclick = () => setIconFov(ICON_FOV);
+
+  // The parts of the character drawn in the icon (the same switches as the properties panel's Bodygroups), always in sight here.
+  const iconParts = document.getElementById("iconParts") as HTMLElement;
+  const iconPartButtons = ["iconPartsAuto", "iconPartsAll", "iconPartsNone"].map((id) => document.getElementById(id) as HTMLButtonElement);
+  function setIconParts(parts: Iterable<string>) {
+    const e = selected;
+    if (!e) return;
+    e.actor.setVisibleRegions(new Set(parts));
+    renderBodygroups(); // (and the studio's list)
+  }
+  function renderIconParts() {
+    iconParts.replaceChildren();
+    const e = selected;
+    const groups = e?.actor.bodyGroups ?? [];
+    for (const b of iconPartButtons) b.disabled = groups.length === 0;
+    if (!e || groups.length === 0) {
+      const none = document.createElement("div");
+      none.className = "dim hint";
+      none.textContent = "This character has no parts to hide.";
+      iconParts.appendChild(none);
+      return;
+    }
+    const shown = e.actor.visibleRegions;
+    const all = shown.has("*");
+    for (const g of groups) {
+      const row = document.createElement("label");
+      row.className = "iconPart";
+      row.title = g.id;
+      const check = document.createElement("input");
+      check.type = "checkbox";
+      check.checked = all || shown.has(g.id);
+      check.onchange = () => {
+        const next = new Set(all ? groups.map((x) => x.id) : shown);
+        if (check.checked) next.add(g.id); else next.delete(g.id);
+        setIconParts(next);
+      };
+      row.append(check, g.label);
+      iconParts.appendChild(row);
+    }
+  }
+  // Hiding by hand: the box, lasso and brush over the view, on the item's triangles or the merc's.
+  let hideTarget: "items" | "body" = "items";
+  const hideTargetButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("#iconHideTarget button"));
+  const hideToolButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("#iconHideTools button"));
+  const hideReset = document.getElementById("iconHideReset") as HTMLButtonElement;
+  const brushRow = document.getElementById("iconBrushRow") as HTMLElement;
+  const brushInputs = [document.getElementById("iconBrush"), document.getElementById("iconBrushNumber")] as HTMLInputElement[];
+  const hideView = document.getElementById("viewTools")?.parentElement ?? els.wrap;
+  const hideTools = createHideTools(hideView, {
+    beginSelect: () => (selected && viewer ? viewer.beginSelect(selected.actor, hideTarget) : null),
+    viewStamp: () => (viewer ? viewer.camera.matrixWorld.elements.join(",") + "," + viewer.camera.fov + "," + viewer.camera.aspect : ""),
+    toolChanged: (tool) => {
+      for (const b of hideToolButtons) b.classList.toggle("on", b.dataset.tool === tool);
+      brushRow.hidden = tool !== "brush";
+    },
+    stroked: () => syncHideReset(),
+  });
+  function syncHideReset() {
+    const a = selected?.actor;
+    hideReset.disabled = !a || !(hideTarget === "items" ? a.hasItemMask : a.hasHandMask);
+  }
+  for (const b of hideTargetButtons) {
+    b.onclick = () => {
+      hideTarget = b.dataset.t === "body" ? "body" : "items";
+      for (const x of hideTargetButtons) x.classList.toggle("on", x === b);
+      syncHideReset();
+    };
+  }
+  for (const b of hideToolButtons) b.onclick = () => hideTools.setTool(hideTools.tool === b.dataset.tool ? null : (b.dataset.tool as HideTool));
+  for (const input of brushInputs) {
+    input.oninput = () => {
+      const v = Number(input.value);
+      if (!Number.isFinite(v) || v <= 0) return;
+      hideTools.setBrushSize(v);
+      for (const other of brushInputs) if (other !== input) other.value = String(v);
+    };
+  }
+  hideReset.onclick = () => {
+    const a = selected?.actor;
+    if (!a) return;
+    if (hideTarget === "items") a.clearItemMask();
+    else a.setHandMaskState(undefined);
+    syncHideReset();
+  };
+
+  // Auto: what the item's equip region shows, as when the studio opened
+  iconPartButtons[0].onclick = () => { if (selected) setIconParts(defaultBodyGroupsFor(selected.cls, [compiler.session.data.region])); };
+  iconPartButtons[1].onclick = () => { selected?.actor.setHandMaskState(undefined); setIconParts((selected?.actor.bodyGroups ?? []).map((g) => g.id)); };
+  iconPartButtons[2].onclick = () => setIconParts([]);
+
   function setIconStatus(text: string, bad = false) {
     iconStatus.textContent = text;
     iconStatus.classList.toggle("err", bad);
     iconStatus.title = text;
   }
 
-  /** The studio's view: black behind, a 22 degree vertical field of view (the square the view's full height shows), no grid or markers. */
+  /** The studio's view: black behind, the chosen vertical field of view (5 degrees at first) (the square the view's full height shows), no grid or markers. */
   function enterIconMode(v: Viewer) {
     iconSaved = { grid: gridOn, indicators: lightsOn };
     v.setBackground(0x000000);
-    v.setFixedVerticalFov(ICON_FOV);
+    v.setFixedVerticalFov(iconFov, true); // (the camera framed the item at the view's own field of view: it keeps its size)
     v.gridVisible = false;
     v.lightIndicators = false;
     els.wrap.classList.add("iconStudio");
     iconFrame.hidden = false;
     iconBar.hidden = false;
-    iconFadePanel.hidden = false;
+    iconPanel.hidden = false;
     showIconFade();
+    setIconFov(iconFov);
+    renderIconParts();
+    syncHideReset();
     setIconStatus("");
   }
 
@@ -7544,7 +7737,8 @@ export function createViewTab(els: Els) {
     els.wrap.classList.remove("iconStudio");
     iconFrame.hidden = true;
     iconBar.hidden = true;
-    iconFadePanel.hidden = true;
+    iconPanel.hidden = true;
+    hideTools.setTool(null);
     if (compilerOn) compiler.selectionChanged();
   }
 
@@ -7555,7 +7749,7 @@ export function createViewTab(els: Els) {
 
   /**
    * Opens the compiler's item alone in a scene of its own (like inspecting an item), with the studio's view: a square frame of 512x512
-   * with the rows the picture must stay between, 22 degrees of field of view, black behind, the lights at their defaults and no
+   * with the rows the picture must stay between, 5 degrees of field of view (or the one chosen), black behind, the lights at their defaults and no
    * post-processing.
    */
   async function openIconStudio() {

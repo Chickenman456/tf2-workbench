@@ -1637,3 +1637,6 @@ h1, h2, h3, h4, .panel h3, .setGroup h3, nav button, .sceneTab, .dockTabs button
 /* the Weapons panel's Festivized switch, under the slot buttons */
 #weaponFestive { display: flex; align-items: center; gap: 6px; margin: 6px 0 0; cursor: pointer; }
 #weaponFestive[hidden] { display: none; }
+/* the Effects panel's Cloak amount, under the toggles while a Spy is cloaked */
+.conditions .cloakAmount { flex: 1 0 100%; display: grid; grid-template-columns: auto 1fr 3.5em; align-items: center; gap: 8px; margin-top: 4px; }
+.conditions .cloakAmount .dim { text-align: right; font-variant-numeric: tabular-nums; }

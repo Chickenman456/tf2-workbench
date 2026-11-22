@@ -1657,6 +1657,7 @@ h1, h2, h3, h4, .panel h3, .setGroup h3, nav button, .sceneTab, .dockTabs button
 .killstreakRow > label > span { opacity: 0.75; }
 .killstreakRow select { min-width: 0; width: 100%; }
 .killstreakRow .ksHigh { display: flex; align-items: center; gap: 6px; cursor: pointer; }
-/* the Effects panel's disguise mask (a Spy's): under the toggles */
-.conditions .spyMaskRow { flex: 1 0 100%; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px; margin-top: 4px; }
-.conditions .spyMaskRow select { min-width: 0; }
+/* the Bodygroups panel's disguise mask (a Spy's): a row of its own under the parts */
+.spyMaskRow { flex: 1 0 100%; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px; margin-top: 4px; }
+.spyMaskRow select { min-width: 0; }
+.bodyGroups .spyMaskRow { grid-column: 1 / -1; }

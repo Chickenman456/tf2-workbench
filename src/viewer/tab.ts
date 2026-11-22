@@ -112,6 +112,7 @@ import { blankUnusuals, parseUnusualSettings, loadUnusualCatalog as fetchUnusual
 import { DEFAULT_SHADOW, type ShadowParams } from "./shadowMath";
 import { parseStudio, studioAo, studioRigLights, DEFAULT_STUDIO, STUDIO_LABELS, STUDIO_ROLES, type StudioLight } from "./studioLight";
 import { createLightRigPanel, DEFAULT_SCENE_RIG } from "./lightRigPanel";
+import { KILLSTREAKERS, NO_KILLSTREAK, SHEENS, hasKillstreak, killstreakEyes, sheenTint, sheenWait, type Killstreak } from "./killstreak";
 import { CONDITION_CLASS, CONDITION_KEYS, CONDITION_LABELS, anyCondition, parseConditions, uberMaterialPath, type ConditionKey, cigaretteEffects, coversSpyHead } from "./conditions";
 import { DEFAULT_FOG, MIST_PRESET, parseFog, type FogState } from "./fog";
 import { createBackdropPicker } from "./backdropPicker";
@@ -314,6 +315,8 @@ interface Entity {
   held: ItemInfo | null;
   /** The weapons the character has festivized (by item id): a Festivizer's lights are drawn on them while held. */
   festive?: Set<number>;
+  /** The killstreaks of its weapons (by item id): the held one's sheen and eye effect are shown. */
+  killstreaks?: Map<number, Killstreak>;
   anim: AnimState;
   /** Buildings only: what the building is doing (see buildingFx.ts). */
   fx: BuildingFx;
@@ -840,7 +843,9 @@ export function createViewTab(els: Els) {
       e.unusuals = { ...e.unusuals, hatItem: hat?.item.id ?? null };
     }
     // the effects the worn items always show (a halo, a pipe's smoke) play with the ones chosen, each on its own item
-    const own: NonNullable<UnusualSettings["items"]> = [...e.applied.flatMap((x) => (x.item.particles ?? []).map((p) => ({ item: x.item.id, ...p }))), ...cigaretteEffects(e.actor.conditions)];
+    const own: NonNullable<UnusualSettings["items"]> = [...e.applied.flatMap((x) => (x.item.particles ?? []).map((p) => ({ item: x.item.id, ...p }))), ...cigaretteEffects(e.actor.conditions),
+      // a Professional Killstreak's eye effect, while its weapon is held (not on a cloaked Spy, as UpdateKillStreakEffects)
+      ...(e.held && !(e.actor.conditions as { cloak?: boolean }).cloak ? killstreakEyes(e.killstreaks?.get(e.held.id), e.team, gameClassOf(e.cls)) : [])];
     const chosen = e.unusuals;
     const settings: UnusualSettings = { ...chosen, ...(own.length ? { items: own } : {}) };
     e.unusualError = "";
@@ -1054,6 +1059,8 @@ export function createViewTab(els: Els) {
     if ((e.warPaintSkin?.key ?? null) !== warPaintKey(e)) e.actor.setHeldSkin(null);
     e.actor.setCosmetics(list);
     e.actor.setProp(prop);
+    syncSheen(e, weapon);
+    if (e === selected) refreshKillstreak();
     if (e === compilerTarget) void bakeCompilerVisDev();
     void syncConditions(e);
     refreshTextures(); // (the panel lists every character's models, not only the selected one's)
@@ -3046,6 +3053,50 @@ export function createViewTab(els: Els) {
       void applyLoadout(t, t.applied);
     }
   };
+  // --- the killstreak of the held weapon (the Weapons panel's Sheen, Killstreaker and streak; see killstreak.ts) ---
+  const ksRow = document.getElementById("weaponKillstreak");
+  const ksSheen = document.getElementById("ksSheen") as HTMLSelectElement | null;
+  const ksEffect = document.getElementById("ksEffect") as HTMLSelectElement | null;
+  const ksHigh = document.getElementById("ksHigh") as HTMLInputElement | null;
+  if (ksSheen && ksEffect) {
+    ksSheen.append(new Option("None", "0"), ...SHEENS.map((s) => new Option(s.name, String(s.id))));
+    ksEffect.append(new Option("None", "0"), ...KILLSTREAKERS.map((k) => new Option(k.name, String(k.id))));
+  }
+  /** What the held weapon's killstreak makes of its materials: the sheen, in the team's colour, from the weapon's own model. */
+  function syncSheen(e: Entity, weapon: ItemInfo | null) {
+    const k = weapon ? e.killstreaks?.get(weapon.id) : undefined;
+    const tint = k ? sheenTint(k.sheen, e.team) : null;
+    e.actor.setSheen(tint && k ? { tint, index: /australium/i.test(weapon!.name) ? 1 : 0, wait: sheenWait(k) } : null);
+  }
+  /** Whether a weapon can have a killstreak: a weapon of a slot that fires or swings (not a taunt, a PDA, a watch or a building). */
+  const canKillstreak = (w: ItemInfo | null | undefined) => !!w && ["primary", "secondary", "melee"].includes(w.slot);
+  function refreshKillstreak() {
+    if (!ksRow || !ksSheen || !ksEffect || !ksHigh) return;
+    const e = selected, weapon = e?.held;
+    ksRow.hidden = !canKillstreak(weapon);
+    if (ksRow.hidden) return;
+    const k = e!.killstreaks?.get(weapon!.id) ?? NO_KILLSTREAK;
+    ksSheen.value = String(k.sheen);
+    ksEffect.value = String(k.effect);
+    ksEffect.disabled = !k.sheen; // (a Professional Killstreak has a sheen too)
+    ksHigh.checked = k.high;
+    ksHigh.disabled = !k.sheen;
+  }
+  const changeKillstreak = () => {
+    const e = selected, weapon = e?.held;
+    if (!e || !weapon || !ksSheen || !ksEffect || !ksHigh) return;
+    const sheen = Number(ksSheen.value);
+    const next: Killstreak = { sheen, effect: sheen ? Number(ksEffect.value) : 0, high: !!sheen && ksHigh.checked };
+    // every selected character holding that weapon, as the other weapon edits go
+    for (const t of entities.filter((x) => x === e || (multi.has(x.id) && x.held?.id === weapon.id))) {
+      t.killstreaks ??= new Map();
+      if (hasKillstreak(next)) t.killstreaks.set(weapon.id, next); else t.killstreaks.delete(weapon.id);
+      syncSheen(t, weapon);
+      void applyUnusuals(t);
+    }
+    refreshKillstreak();
+  };
+  if (ksSheen && ksEffect && ksHigh) ksSheen.onchange = ksEffect.onchange = ksHigh.onchange = changeKillstreak;
 
   function selectEntity(e: Entity, keepMulti = false) {
     nothingSelected = false;
@@ -3067,6 +3118,7 @@ export function createViewTab(els: Els) {
     viewer?.select(e.actor);
     restoreUi(e);
     refreshFestive();
+    refreshKillstreak();
     renderEntities();
   }
 
@@ -7105,6 +7157,7 @@ export function createViewTab(els: Els) {
         ...(e.warPaints?.size ? { warPaints: Object.fromEntries([...e.warPaints].map(([id, p]) => [id, { ...p }])) } : {}),
         ...(e.heldByClass?.size ? { heldByClass: Object.fromEntries(e.heldByClass) } : {}),
         ...(e.festive?.size ? { festive: [...e.festive] } : {}),
+        ...(e.killstreaks?.size ? { killstreaks: Object.fromEntries([...e.killstreaks].map(([id, k]) => [String(id), k])) } : {}),
         ...(isBuildingCls(e.cls) ? { building: { ...e.fx } } : {}),
         flex: Object.fromEntries(e.flex),
         anim: { sequence: e.anim.info?.sequences.find((q) => q.index === e.anim.seq)?.name ?? null, encoded: e.anim.encoded },
@@ -7187,6 +7240,7 @@ export function createViewTab(els: Els) {
       if (s.warPaint && e.held && !e.warPaints.has(e.held.id)) e.warPaints.set(e.held.id, { ...s.warPaint });
       e.heldByClass = new Map(Object.entries(s.heldByClass ?? {}));
       e.festive = s.festive?.length ? new Set(s.festive) : undefined;
+      e.killstreaks = s.killstreaks ? new Map(Object.entries(s.killstreaks).map(([id, k]) => [Number(id), k])) : undefined;
       if (s.building) e.fx = { ...s.building };
       e.flex = new Map(Object.entries(s.flex));
       const cls = gameClassOf(e.cls);

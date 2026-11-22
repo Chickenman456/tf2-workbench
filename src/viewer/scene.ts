@@ -11,6 +11,7 @@ import { parseRimLight, type RimLightState } from "./rimLight";
 import { parseUnusualSettings, type UnusualSettings } from "./particles/assets";
 import { parseWeaponSnapshot, type WeaponParticleSnapshot } from "./particles/weaponSnapshot";
 import { parseConditions, type Conditions } from "./conditions";
+import { parseKillstreak, type Killstreak } from "./killstreak";
 import { parseCameras, type CameraCollection } from "./cameraData";
 import { readFx, type BuildingFx } from "./buildingFx";
 import { parseGroups, type HierarchyGroup } from "./hierarchyTree";
@@ -42,6 +43,8 @@ export interface SceneEntity {
   warPaint?: { kit: number; wear: number; seed: string };
   /** The weapons it has festivized (a Festivizer's lights on them). */
   festive?: number[];
+  /** The killstreaks of its weapons, by item id (see killstreak.ts). */
+  killstreaks?: Record<string, Killstreak>;
   /** Flex controller values by name. */
   flex: Record<string, number>;
   anim: { sequence: string | null; encoded: number[] };
@@ -176,6 +179,11 @@ export function parseScene(text: string): SceneFile {
       ...(e.warPaints && typeof e.warPaints === "object" ? { warPaints: Object.fromEntries(Object.entries(e.warPaints).filter(([id]) => /^\d+$/.test(id)).flatMap(([id, p]) => (warPaintOf(p) ? [[id, warPaintOf(p)!]] : []))) } : {}),
       ...(e.heldByClass && typeof e.heldByClass === "object" ? { heldByClass: Object.fromEntries(Object.entries(e.heldByClass).filter(([, v]) => v === null || isNum(v))) as Record<string, number | null> } : {}),
       ...(Array.isArray(e.festive) && e.festive.every(isNum) && e.festive.length ? { festive: e.festive } : {}),
+      ...(() => {
+        const out: Record<string, Killstreak> = {};
+        if (e.killstreaks && typeof e.killstreaks === "object") for (const [id, k] of Object.entries(e.killstreaks as object)) { const v = parseKillstreak(k); if (v && /^\d+$/.test(id)) out[id] = v; }
+        return Object.keys(out).length ? { killstreaks: out } : {};
+      })(),
       inspectOnly: e.inspectOnly === true ? true : undefined,
       bodyTris: e.bodyTris && typeof e.bodyTris === "object" ? Object.fromEntries(Object.entries(e.bodyTris).filter(([, v]) => typeof v === "string")) : undefined,
       fogged: e.fogged === false ? false : undefined,

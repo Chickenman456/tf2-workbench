@@ -763,7 +763,7 @@ export class Actor {
 
   /** The material path of a mesh in the current team skin (families a model lacks fall back to RED). */
   private skinMaterial(m: MeshData): string {
-    const family = this.zombie ? zombieFamily(m.materials.length, this.skin) ?? this.skin : this.skin;
+    const family = this.zombie ? zombieFamily(m.materials.length, this.skin) ?? this.skin : this.skin + (this.maskFamily ?? 0);
     return m.materials[family] ?? m.materials[this.skin] ?? m.material;
   }
 
@@ -1085,8 +1085,8 @@ export class Actor {
   }
 
   /** The sheen of the held weapon's killstreak (null: none): its colour, whether it is an Australium's, and the wait between sweeps. */
-  private sheen: { tint: Rgb; index: number; wait: number } | null = null;
-  setSheen(sheen: { tint: Rgb; index: number; wait: number } | null) {
+  private sheen: { tint: Rgb; index: number; wait: number; speed?: number } | null = null;
+  setSheen(sheen: { tint: Rgb; index: number; wait: number; speed?: number } | null) {
     if (JSON.stringify(sheen) === JSON.stringify(this.sheen)) return;
     this.sheen = sheen;
     this.applySheen();
@@ -1194,6 +1194,17 @@ export class Actor {
    * The Voodoo-Cursed souls set the player's skin override: the class model is drawn with the zombie families of its skin table
    * (see zombieFamily). The materials of the family must already be in the material map.
    */
+  /**
+   * The Spy's disguise mask (C_TFPlayer::GetSkin): the skin family past the team's that shows a class's face on his mask (4 + 2 per
+   * class, Scout first), or null for his own. The other meshes look the same in those families.
+   */
+  private maskFamily: number | null = null;
+  setMaskFamily(family: number | null) {
+    if (family === this.maskFamily) return;
+    this.maskFamily = family;
+    this.buildClassMeshes();
+  }
+
   setZombieSkin(on: boolean) {
     if (on === this.zombie) return;
     this.zombie = on;

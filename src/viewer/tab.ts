@@ -113,6 +113,7 @@ import { DEFAULT_SHADOW, type ShadowParams } from "./shadowMath";
 import { parseStudio, studioAo, studioRigLights, DEFAULT_STUDIO, STUDIO_LABELS, STUDIO_ROLES, type StudioLight } from "./studioLight";
 import { createLightRigPanel, DEFAULT_SCENE_RIG } from "./lightRigPanel";
 import { KILLSTREAKERS, NO_KILLSTREAK, SHEENS, hasKillstreak, killstreakEyes, sheenTint, sheenWait, type Killstreak } from "./killstreak";
+import { SPY_MASKS, spyMaskFamily } from "./spyMask";
 import { CONDITION_CLASS, CONDITION_KEYS, CONDITION_LABELS, anyCondition, parseConditions, uberMaterialPath, type ConditionKey, cigaretteEffects, coversSpyHead } from "./conditions";
 import { DEFAULT_FOG, MIST_PRESET, parseFog, type FogState } from "./fog";
 import { createBackdropPicker } from "./backdropPicker";
@@ -295,6 +296,8 @@ interface Entity {
   unusualError: string;
   /** A worn item sets the player skin override (a Voodoo-Cursed soul): the class model is drawn in its zombie skin family. */
   zombie?: boolean;
+  /** A Spy's disguise mask: the class whose face it shows (null or absent: no mask). */
+  spyMask?: string | null;
   id: number;
   actor: Actor;
   /** The name given in the hierarchy (absent: the class). */
@@ -1037,6 +1040,9 @@ export function createViewTab(els: Els) {
       const part = models.get(classPath(e.cls))?.bodyParts[item.wmBodygroup[0]]?.name;
       if (part) groups[part.toLowerCase()] = item.wmBodygroup[1];
     }
+    // a Spy's disguise mask: the spyMask body part on, its skin family the class's (both as the game sets them while he is disguised)
+    const mask = gameClassOf(e.cls) === "spy" && e.spyMask ? spyMaskFamily(e.spyMask) : null;
+    if (mask !== null) groups.spymask = 1;
     const merged = { ...groups, ...Object.fromEntries(e.bodyManual) };
     // a Voodoo-Cursed soul puts the class model in its zombie skin: its materials load before the skin changes
     e.zombie = everything.some(({ item }) => item.skinOverride);
@@ -1046,6 +1052,7 @@ export function createViewTab(els: Els) {
     if (token !== e.loadoutToken || !entities.includes(e)) return; // a newer loadout or class superseded this one
     e.actor.setSkin(team);
     e.actor.setZombieSkin(!!e.zombie);
+    e.actor.setMaskFamily(mask);
     e.bodyItems = groups;
     e.actor.setBodygroups(merged);
     if (e === selected) renderBodygroups();
@@ -1404,6 +1411,13 @@ export function createViewTab(els: Els) {
   /** Loads the materials of a class model in the team's skin, and in the zombie family of it when the character wears a soul. */
   async function ensureClassMaterials(e: Entity, data: ModelData) {
     await ensureMaterials(data, e.team);
+    // a disguise mask's family, in every body group's models (the mask is a body group of its own)
+    const mask = gameClassOf(e.cls) === "spy" && e.spyMask ? spyMaskFamily(e.spyMask) : null;
+    if (mask !== null) {
+      const wanted = new Set<string>();
+      for (const bp of data.bodyParts) for (const model of bp.models) for (const m of model.meshes) if (m.indices.length) wanted.add(m.materials[e.team + mask] ?? m.materials[e.team] ?? m.material);
+      await loadMaterials(wanted);
+    }
     const zombie = e.zombie ? zombieFamily(data.skinCount, e.team) : null;
     if (zombie !== null) await ensureMaterials(data, zombie);
   }
@@ -1441,7 +1455,8 @@ export function createViewTab(els: Els) {
     for (const bp of data.bodyParts) {
       const index = groups[bp.name.toLowerCase()] ?? 0;
       if (index === 0) continue;
-      for (const m of bp.models[index]?.meshes ?? []) if (m.indices.length) wanted.add(m.materials[(e.zombie ? zombieFamily(m.materials.length, e.team) : null) ?? e.team] ?? m.materials[e.team] ?? m.material);
+      const mask = gameClassOf(e.cls) === "spy" && e.spyMask ? spyMaskFamily(e.spyMask) : null;
+      for (const m of bp.models[index]?.meshes ?? []) if (m.indices.length) wanted.add(m.materials[(e.zombie ? zombieFamily(m.materials.length, e.team) : null) ?? e.team + (mask ?? 0)] ?? m.materials[e.team] ?? m.material);
     }
     await loadMaterials(wanted);
   }
@@ -2534,7 +2549,7 @@ export function createViewTab(els: Els) {
     if (e.actor.conditions.cloak) {
       const row = document.createElement("label");
       row.className = "cloakAmount";
-      row.title = "How far the Spy is cloaked: his middle goes first, his outline last";
+      row.title = "How far the character is cloaked: the middle goes first, the outline last";
       const name = document.createElement("span");
       name.textContent = "Cloak";
       const range = document.createElement("input");
@@ -2550,6 +2565,25 @@ export function createViewTab(els: Els) {
         for (const t of entities.filter((x) => x === e || (multi.has(x.id) && x.actor.conditions.cloak))) t.actor.setCloakAmount(Number(range.value) / 100);
       };
       row.append(name, range, value);
+      condBox.appendChild(row);
+    }
+    // a Spy's disguise mask: the face of a class on it, as a disguised Spy's teammates see him
+    if (gameClassOf(e.cls) === "spy") {
+      const row = document.createElement("label");
+      row.className = "spyMaskRow";
+      row.title = "The disguise mask on the Spy's face, showing the class he is disguised as (as his own team sees him)";
+      const name = document.createElement("span");
+      name.textContent = "Mask";
+      const pick = document.createElement("select");
+      pick.append(new Option("None", ""), ...SPY_MASKS.map((c) => new Option(c[0].toUpperCase() + c.slice(1), c)));
+      pick.value = e.spyMask ?? "";
+      pick.onchange = () => {
+        for (const t of entities.filter((x) => x === e || (multi.has(x.id) && gameClassOf(x.cls) === "spy"))) {
+          t.spyMask = pick.value || null;
+          void applyLoadout(t, t.applied);
+        }
+      };
+      row.append(name, pick);
       condBox.appendChild(row);
     }
   }
@@ -3058,6 +3092,8 @@ export function createViewTab(els: Els) {
   const ksSheen = document.getElementById("ksSheen") as HTMLSelectElement | null;
   const ksEffect = document.getElementById("ksEffect") as HTMLSelectElement | null;
   const ksHigh = document.getElementById("ksHigh") as HTMLInputElement | null;
+  const ksSpeed = document.getElementById("ksSpeed") as HTMLInputElement | null;
+  const ksSpeedValue = document.getElementById("ksSpeedValue");
   if (ksSheen && ksEffect) {
     ksSheen.append(new Option("None", "0"), ...SHEENS.map((s) => new Option(s.name, String(s.id))));
     ksEffect.append(new Option("None", "0"), ...KILLSTREAKERS.map((k) => new Option(k.name, String(k.id))));
@@ -3066,7 +3102,7 @@ export function createViewTab(els: Els) {
   function syncSheen(e: Entity, weapon: ItemInfo | null) {
     const k = weapon ? e.killstreaks?.get(weapon.id) : undefined;
     const tint = k ? sheenTint(k.sheen, e.team) : null;
-    e.actor.setSheen(tint && k ? { tint, index: /australium/i.test(weapon!.name) ? 1 : 0, wait: sheenWait(k) } : null);
+    e.actor.setSheen(tint && k ? { tint, index: /australium/i.test(weapon!.name) ? 1 : 0, wait: sheenWait(k), ...(k.speed ? { speed: k.speed } : {}) } : null);
   }
   /** Whether a weapon can have a killstreak: a weapon of a slot that fires or swings (not a taunt, a PDA, a watch or a building). */
   const canKillstreak = (w: ItemInfo | null | undefined) => !!w && ["primary", "secondary", "melee"].includes(w.slot);
@@ -3081,12 +3117,18 @@ export function createViewTab(els: Els) {
     ksEffect.disabled = !k.sheen; // (a Professional Killstreak has a sheen too)
     ksHigh.checked = k.high;
     ksHigh.disabled = !k.sheen;
+    if (ksSpeed && ksSpeedValue) {
+      ksSpeed.value = String(Math.round((k.speed ?? 1) * 100));
+      ksSpeedValue.textContent = `${ksSpeed.value}%`;
+      ksSpeed.disabled = !k.sheen;
+    }
   }
   const changeKillstreak = () => {
     const e = selected, weapon = e?.held;
     if (!e || !weapon || !ksSheen || !ksEffect || !ksHigh) return;
     const sheen = Number(ksSheen.value);
-    const next: Killstreak = { sheen, effect: sheen ? Number(ksEffect.value) : 0, high: !!sheen && ksHigh.checked };
+    const speed = ksSpeed ? Number(ksSpeed.value) / 100 : 1;
+    const next: Killstreak = { sheen, effect: sheen ? Number(ksEffect.value) : 0, high: !!sheen && ksHigh.checked, ...(sheen && speed !== 1 ? { speed } : {}) };
     // every selected character holding that weapon, as the other weapon edits go
     for (const t of entities.filter((x) => x === e || (multi.has(x.id) && x.held?.id === weapon.id))) {
       t.killstreaks ??= new Map();
@@ -3097,6 +3139,21 @@ export function createViewTab(els: Els) {
     refreshKillstreak();
   };
   if (ksSheen && ksEffect && ksHigh) ksSheen.onchange = ksEffect.onchange = ksHigh.onchange = changeKillstreak;
+  // (the speed changes the sheen as it is dragged; the eye effect does not need to start again for it)
+  if (ksSpeed) ksSpeed.oninput = () => {
+    const e = selected, weapon = e?.held;
+    if (!e || !weapon) return;
+    if (ksSpeedValue) ksSpeedValue.textContent = `${ksSpeed.value}%`;
+    const speed = Number(ksSpeed.value) / 100;
+    for (const t of entities.filter((x) => x === e || (multi.has(x.id) && x.held?.id === weapon.id))) {
+      const k = t.killstreaks?.get(weapon.id);
+      if (!k) continue;
+      const next = { ...k };
+      if (speed === 1) delete next.speed; else next.speed = speed;
+      t.killstreaks!.set(weapon.id, next);
+      syncSheen(t, weapon);
+    }
+  };
 
   function selectEntity(e: Entity, keepMulti = false) {
     nothingSelected = false;
@@ -7170,6 +7227,7 @@ export function createViewTab(els: Els) {
         lod: e.lod > 0 ? e.lod : undefined,
         conditions: anyCondition(e.actor.conditions) ? { ...e.actor.conditions } : undefined,
         ...(e.actor.conditions.cloak ? { cloak: e.actor.cloakAmount } : {}),
+        ...(e.spyMask ? { spyMask: e.spyMask } : {}),
         gray: e.actor.gray || undefined,
         bodyShown: e.actor.partsHidden ? [...e.actor.visibleRegions] : undefined,
         bodyMaskVersion: 1,
@@ -7241,6 +7299,7 @@ export function createViewTab(els: Els) {
       e.heldByClass = new Map(Object.entries(s.heldByClass ?? {}));
       e.festive = s.festive?.length ? new Set(s.festive) : undefined;
       e.killstreaks = s.killstreaks ? new Map(Object.entries(s.killstreaks).map(([id, k]) => [Number(id), k])) : undefined;
+      e.spyMask = s.spyMask ?? null;
       if (s.building) e.fx = { ...s.building };
       e.flex = new Map(Object.entries(s.flex));
       const cls = gameClassOf(e.cls);

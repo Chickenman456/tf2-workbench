@@ -252,6 +252,8 @@ export class Actor {
   private legacyRegions = false;
   /** Triangles hidden by hand, per class mesh (key: body part / model / mesh; one byte per triangle); text while still packed as loaded from a scene. */
   private handMask = new Map<string, Uint8Array | string>();
+  /** Triangles of the worn items hidden by hand, the same way (key: item / body part / mesh); kept while the items are rebuilt. */
+  private itemMask = new Map<string, Uint8Array | string>();
   private readonly gravitySource = new THREE.Vector3(0, 0, -1);
   private readonly gravityBind = new THREE.Vector3(0, -1, 0);
   /** The clip and time the bones were last posed for: a paused entity is not re-posed every frame. */
@@ -430,16 +432,28 @@ export class Actor {
     this.buildClassMeshes();
   }
 
-  /** The by-hand mask of a mesh (unpacked on first use), or null when it has none (`create` makes an empty one). */
-  private maskFor(key: string, count: number, create: boolean): Uint8Array | null {
-    let mask = this.handMask.get(key);
+  /** The by-hand masks a mesh's triangles are in: a worn item's, or the character's own. */
+  private masksOf(mesh: THREE.Object3D) {
+    return mesh.userData.cosmeticSlot ? this.itemMask : this.handMask;
+  }
+
+  /**
+   * The by-hand mask of a mesh (unpacked on first use), or null when it has none (`create` makes an empty one). A mask made for another
+   * number of triangles (the item was rebuilt with other geometry) no longer means anything and is dropped.
+   */
+  private maskFor(key: string, count: number, create: boolean, masks = this.handMask): Uint8Array | null {
+    let mask = masks.get(key);
     if (typeof mask === "string") {
       mask = unpackMask(mask, count);
-      this.handMask.set(key, mask);
+      masks.set(key, mask);
+    }
+    if (mask && mask.length !== count) {
+      masks.delete(key);
+      mask = undefined;
     }
     if (!mask && create) {
       mask = new Uint8Array(count);
-      this.handMask.set(key, mask);
+      masks.set(key, mask);
     }
     return mask ?? null;
   }
@@ -458,7 +472,7 @@ export class Actor {
     const key = mesh.userData.maskKey as string | undefined;
     if (!m || !key) return;
     const src = m.indices;
-    const mask = this.maskFor(key, src.length / 3, false);
+    const mask = this.maskFor(key, src.length / 3, false, this.masksOf(mesh));
     let index = mesh.userData.handIndex as THREE.BufferAttribute | undefined;
     if (!index) {
       if (!mask || !mask.some((x) => x)) return;
@@ -512,14 +526,30 @@ export class Actor {
     this.cosmeticGroup?.traverse((o) => { if (o instanceof THREE.SkinnedMesh && o.userData.maskKey) this.refreshHand(o); });
   }
 
+  /** Whether any triangle of the worn items is hidden by hand. */
+  get hasItemMask(): boolean {
+    return [...this.itemMask.values()].some((v) => typeof v === "string" || v.some((x) => x));
+  }
+
+  /** Brings back every triangle of the worn items hidden by hand. */
+  clearItemMask() {
+    this.itemMask.clear();
+    this.cosmeticGroup?.traverse((o) => {
+      if (o instanceof THREE.SkinnedMesh && o.userData.handIndex) this.refreshHand(o);
+    });
+  }
+
   /**
    * Starts a selection over the view: where every vertex of the class meshes is on screen right now (`toScreen` gives the client
    * pixels of a vertex in viewer space, false when it is out of view), kept for the whole stroke so that what the tint shows is exactly
    * what is hidden afterwards. A shape picks the triangles it touches that face the camera (all of them for a two-sided material); the
    * tint is drawn over everything, cosmetics included, red for the triangles that would be hidden and green for the ones that would return.
    */
-  beginSelect(toScreen: (p: THREE.Vector3, out: { x: number; y: number }) => boolean): ViewSelection | null {
+  beginSelect(toScreen: (p: THREE.Vector3, out: { x: number; y: number }) => boolean, target: "body" | "items" = "body"): ViewSelection | null {
     if (!this.classData || !this.classGroup || !this.skeleton) return null;
+    const group = target === "items" ? this.cosmeticGroup : this.classGroup;
+    if (!group) return null;
+    const masks = target === "items" ? this.itemMask : this.handMask;
     this.modelGroup?.updateMatrixWorld(true);
     this.skeleton.update();
     const p = new THREE.Vector3();
@@ -537,11 +567,9 @@ export class Actor {
     }
     const parts: Part[] = [];
     const meshes: THREE.SkinnedMesh[] = [];
-    for (const group of [this.classGroup, this.cosmeticGroup]) {
-      group?.traverse((o) => {
-        if (o instanceof THREE.SkinnedMesh && !o.userData.preview && o.visible) meshes.push(o);
-      });
-    }
+    group.traverse((o) => {
+      if (o instanceof THREE.SkinnedMesh && !o.userData.preview && (target === "body" || o.visible)) meshes.push(o);
+    });
     for (const o of meshes) {
       const m = o.userData.meshData as MeshData | undefined;
       const key = o.userData.maskKey as string | undefined;
@@ -589,20 +617,19 @@ export class Actor {
       geometry.setIndex(index);
       const mesh = new THREE.SkinnedMesh(geometry, tintMaterial(false));
       mesh.userData.preview = true;
-      // (bound as the mesh it tints is: a cosmetic has a skeleton of its own)
-      mesh.bindMode = part.mesh.bindMode;
+      mesh.bindMode = THREE.DetachedBindMode;
       mesh.bind(part.mesh.skeleton, part.mesh.bindMatrix);
       mesh.frustumCulled = false;
       mesh.matrixAutoUpdate = false;
       mesh.renderOrder = 100;
-      (part.mesh.parent ?? this.classGroup)?.add(mesh);
+      group.add(mesh);
       part.preview = { mesh, index, sign: 1 };
       return part.preview;
     };
     const removePreviews = () => {
       for (const part of parts) {
         if (!part.preview) continue;
-        part.preview.mesh.removeFromParent();
+        group.remove(part.preview.mesh);
         part.preview.mesh.geometry.dispose();
         part.preview = null;
       }
@@ -615,7 +642,7 @@ export class Actor {
       }
       pick(shape);
       for (const part of parts) {
-        const mask = this.maskFor(part.key, part.tris, false);
+        const mask = this.maskFor(part.key, part.tris, false, masks);
         const pv = previewOf(part);
         const out = pv.index.array as Uint32Array;
         const src = part.m.indices;
@@ -643,7 +670,7 @@ export class Actor {
         pick(shape);
         const value = hide ? 1 : 0;
         for (const part of parts) {
-          const mask = this.maskFor(part.key, part.tris, true)!;
+          const mask = this.maskFor(part.key, part.tris, true, masks)!;
           let changed = false;
           for (let t = 0; t < part.tris; t++) {
             if (part.picked[t] && mask[t] !== value) {
@@ -1003,7 +1030,7 @@ export class Actor {
       for (const [partIndex, bp] of data.bodyParts.entries()) {
         const sub = (list[index].weapon && partIndex === 0 ? bp.models[this.heldBodyState] : null) ?? bp.models[0];
         if (!sub) continue;
-        for (const m of sub.meshes) {
+        for (const [meshIndex, m] of sub.meshes.entries()) {
           if (m.indices.length === 0) continue;
           const override = list[index].material;
           const path = override ?? m.materials[skin] ?? m.material;
@@ -1015,11 +1042,10 @@ export class Actor {
           const mesh = this.makeSkinnedMesh(m, material, skeleton, data, this.flexCosmetic);
           mesh.userData.source = { data: this.materials.get(path) ?? null, paint, skins: override ? [override] : m.materials, base: override ?? m.material, spell: spellFx?.spell, warPaint };
           mesh.userData.cosmeticSlot = index + 1; // 1.. in the order of the list; 0 / unset is the class's own mesh
-          // triangles of a cosmetic can be hidden by hand too: the mask goes by the model, so every paint of it (and every character wearing
-          // it) shows the same; another style with another model has a mask of its own
+          // (what hiding by hand keys the item's triangles by: the same item keeps them when it is rebuilt)
           mesh.userData.meshData = m;
-          mesh.userData.maskKey = `cosmetic:${data.path.toLowerCase()}/${partIndex}/${sub.meshes.indexOf(m)}`;
-          this.maskMesh(mesh);
+          mesh.userData.maskKey = `${list[index].itemId ?? `#${index}`}/${partIndex}/${meshIndex}`;
+          this.refreshHand(mesh);
           this.cosmeticGroup.add(mesh);
         }
       }

@@ -167,6 +167,11 @@ td.n { text-align: right; font-variant-numeric: tabular-nums; }
 /* the HWM model switch under the class buttons */
 .hwmToggle { display: block; width: 100%; margin-top: 6px; min-height: 28px; padding: 4px 8px; }
 .hwmToggle.on { border-color: var(--ui-accent-line); background: var(--ui-accent-soft); }
+/* a merc's own body (any model), and the class a prop wears the cosmetics of */
+.customBody { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; }
+.customBody span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); }
+.customBody button { padding: 0 8px; }
+.customBody select { flex: 1 1 auto; min-width: 0; }
 #dockRight { display: flex; flex-direction: column; min-height: 0; }
 #dockRight .itemlist { flex: 1 1 auto; }
 .animCol:last-child { overflow-x: hidden; }

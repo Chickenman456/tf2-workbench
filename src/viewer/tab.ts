@@ -131,7 +131,12 @@ const ALL_CLASSES_ORDER = ["pyro", "engineer", "spy", "heavy", "sniper", "scout"
 
 /** Label, model file name under models/player, and the class name items_game.txt uses. */
 /** The model a character is drawn with: a merc's HWM model when it is set to (see Entity.hwm), else its class's or the building's or prop's. */
-const modelPath = (e: { cls: string; hwm?: boolean }, cls = e.cls) => (e.hwm && CLASSES.some(([, m]) => m === cls) ? `models/player/hwm/${cls}.mdl` : classPath(cls));
+const modelPath = (e: { cls: string; hwm?: boolean; body?: string }, cls = e.cls) => {
+  const merc = CLASSES.some(([, m]) => m === cls);
+  // (a merc with a body of its own, any model: it wears the class's cosmetics, which follow the bones of the same names)
+  if (merc && e.body) return e.body;
+  return e.hwm && merc ? `models/player/hwm/${cls}.mdl` : classPath(cls);
+};
 
 const CLASSES: [label: string, mdl: string, gameClass: string][] = [
   ["Soldier", "soldier", "soldier"],
@@ -293,6 +298,11 @@ interface Entity {
   cls: string;
   /** A merc drawn with its HWM model (models/player/hwm: the high-detail head, with more face flexes), not the game's own. */
   hwm?: boolean;
+  /**
+   * A merc drawn with any model as its body (`models/....mdl`: a workshop character such as a buff Pyro), wearing the class's cosmetics and
+   * weapons, which are merged onto its bones by their names (a model of the game's skeleton takes them as the class's own does).
+   */
+  body?: string;
   /** Team skin family: 0 RED, 1 BLU. */
   team: number;
   /** The cosmetics browser's state (the full loadout, including items the class cannot wear right now). */
@@ -1167,10 +1177,68 @@ export function createViewTab(els: Els) {
     void show(e, e.cls, { seq: e.anim.seq, seqName: e.anim.seqName, encoded: e.anim.encoded.slice(), playback: () => e.actor.playback });
   };
 
+  // A body of its own for a merc (any model: a workshop character), shown with an × to go back to the class's; and, on a prop, the class
+  // whose cosmetics it is to wear (it becomes a merc of that class with the prop's model as its body)
+  const bodyRow = document.createElement("div");
+  bodyRow.className = "customBody";
+  const bodyName = document.createElement("span");
+  const bodyClear = document.createElement("button");
+  bodyClear.textContent = "×";
+  bodyClear.title = "Draw this merc with its class's own model again";
+  bodyRow.append("Custom body: ", bodyName, bodyClear);
+  hwmToggle.after(bodyRow);
+  bodyClear.onclick = () => {
+    const e = selected;
+    if (!e?.body) return;
+    stopPlay();
+    e.body = undefined;
+    markSelected();
+    void show(e, e.cls, { seq: e.anim.seq, seqName: e.anim.seqName, encoded: e.anim.encoded.slice(), playback: () => e.actor.playback });
+  };
+  const wearRow = document.createElement("label");
+  wearRow.className = "customBody wearAs";
+  wearRow.title = "Wear the cosmetics and weapons of a class on this model: it becomes a merc of that class with this model as its body. The items follow its bones by name, so a model made on the class's skeleton (a workshop character) wears them as the class does";
+  const wearSelect = document.createElement("select");
+  wearRow.append("Wear cosmetics as ", wearSelect);
+  document.getElementById("propSkins")?.after(wearRow);
+  wearSelect.onchange = () => {
+    const e = selected;
+    const cls = wearSelect.value;
+    wearSelect.value = "";
+    if (!e || !cls || !isBuildingCls(e.cls)) return;
+    wearCosmeticsAs(e, cls);
+  };
+  /** Makes a prop a merc of a class, with the prop's model as its body: it wears that class's cosmetics and weapons. */
+  function wearCosmeticsAs(e: Entity, cls: string) {
+    stopPlay();
+    e.body = classPath(e.cls);
+    e.hwm = false;
+    e.cls = cls;
+    markSelected();
+    renderEntities();
+    renderBuildingPanel();
+    applyProps();
+    void show(e, cls);
+  }
+
   function markSelected() {
     for (const [mdl, b] of buttons) b.classList.toggle("on", mdl === selected?.cls);
     const merc = !!selected && CLASSES.some(([, m]) => m === selected!.cls);
-    hwmToggle.hidden = !merc;
+    bodyRow.hidden = !merc || !selected?.body;
+    if (merc && selected?.body) {
+      bodyName.textContent = selected.body.replace(/^models\//, "").replace(/\.mdl$/, "");
+      bodyName.title = selected.body;
+    }
+    // a prop (or an NPC; not a building) can wear a class's cosmetics; the class its name says (buffpyro: the Pyro) comes first
+    const prop = !!selected && isBuildingCls(selected.cls) && !buildingOf(selected.cls);
+    wearRow.hidden = !prop;
+    if (prop) {
+      const name = selected!.cls.toLowerCase();
+      const guess = CLASSES.find(([, m, game]) => name.includes(m) || name.includes(game))?.[1];
+      wearSelect.replaceChildren(new Option("— a class —", ""), ...CLASSES.map(([label, m]) => new Option(m === guess ? `${label} (its name)` : label, m)));
+      wearSelect.value = "";
+    }
+    hwmToggle.hidden = !merc || !!selected?.body;
     hwmToggle.classList.toggle("on", merc && !!selected!.hwm);
     hwmToggle.setAttribute("aria-pressed", String(merc && !!selected!.hwm));
   }
@@ -3543,6 +3611,7 @@ export function createViewTab(els: Els) {
     e.group = hierarchy().activeGroup() ?? (copy ? base?.group : undefined);
     if (copy && base) e.actor.setScale(base.actor.scale);
     if (base?.hwm && e.cls === base.cls) e.hwm = true; // (a new merc of the selected one's class is drawn the same)
+    if (base?.body && e.cls === base.cls) e.body = base.body;
     if (copy && base) e.actor.setEyesFollowCamera(base.actor.followsCamera);
     if (copy && base && inPlace) v.copyPlacement(base.actor, e.actor);
     // Ctrl + Add: a copy with the same cosmetics, paints, styles, weapon, expression and animation
@@ -4691,6 +4760,7 @@ export function createViewTab(els: Els) {
     while (extras.length < s.copies - 1) {
       const e = newEntity(v.addActor(), base.cls, base.team);
       e.hwm = base.hwm;
+      e.body = base.body;
       e.group = base.group;
       e.actor.setScale(base.actor.scale);
       e.held = base.held;
@@ -7177,6 +7247,7 @@ export function createViewTab(els: Els) {
       return {
         cls: e.cls,
         ...(e.hwm ? { hwm: true } : {}),
+        ...(e.body ? { body: e.body } : {}),
         team: e.team,
         ...(e.name ? { name: e.name } : {}),
         ...(e.group ? { group: e.group } : {}),
@@ -7240,6 +7311,7 @@ export function createViewTab(els: Els) {
     const v = ensureViewer();
     const e = newEntity(v.addActor(), s.cls, s.team, id);
       e.hwm = s.hwm === true;
+      e.body = typeof s.body === "string" && /^models\/[^\\:]+\.mdl$/i.test(s.body) && !s.body.split("/").includes("..") ? s.body.toLowerCase() : undefined;
       e.name = s.name;
       e.group = s.group;
       e.hidden = s.hidden === true;

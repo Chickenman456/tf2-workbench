@@ -22,6 +22,8 @@ export interface SceneEntity {
   cls: string;
   /** A merc drawn with its HWM model (models/player/hwm). */
   hwm?: boolean;
+  /** A merc drawn with another model as its body (`models/....mdl`), wearing its class's cosmetics. */
+  body?: string;
   /** Team skin family: 0 RED, 1 BLU. */
   team: number;
   /** The name given in the hierarchy (absent: the class). */
